@@ -1,0 +1,175 @@
+@import '@fontsource-variable/geist';
+@import '@fontsource-variable/geist-mono';
+@import '@fontsource/fredoka/600.css';
+@import '@fontsource/fredoka/700.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Flight Log design tokens — "Midnight" is the native theme; "Twilight" lifts the base slightly. */
+:root {
+  --ink: 4 9 21;          /* page base */
+  --night: 9 17 36;       /* raised base */
+  --deep: 14 25 50;       /* inputs, wells */
+  --fg: 241 245 251;
+  --muted: 148 163 189;   /* slate */
+  --faint: 98 114 143;
+  --accent: 59 130 246;   /* aviation blue */
+  --ice: 169 212 255;
+  --live: 94 224 239;     /* restrained cyan for active states */
+  --good: 52 211 153;
+  --warn: 245 181 68;
+  --bad: 248 113 113;
+  --glass-a: 0.58;
+  --glass-blur: 22px;
+  --stroke: 255 255 255;
+  color-scheme: dark;
+}
+:root[data-theme='twilight'] {
+  --ink: 11 19 38;
+  --night: 17 28 52;
+  --deep: 23 36 64;
+  --muted: 160 175 200;
+}
+:root[data-transparency='reduced'] {
+  --glass-a: 0.94;
+  --glass-blur: 0px;
+}
+
+html, body, #root { height: 100%; }
+body {
+  @apply bg-ink text-fg font-sans antialiased;
+  font-feature-settings: 'ss01', 'cv11';
+  -webkit-tap-highlight-color: transparent;
+}
+::selection { background: rgb(var(--accent) / 0.4); }
+
+/* Ambient backdrop: deep navy with a faint horizon glow and a whisper of photography. */
+.sky-backdrop {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background:
+    radial-gradient(1200px 600px at 78% -10%, rgb(59 130 246 / 0.16), transparent 60%),
+    radial-gradient(900px 500px at 0% 110%, rgb(94 224 239 / 0.06), transparent 60%),
+    linear-gradient(180deg, rgb(var(--night)) 0%, rgb(var(--ink)) 55%);
+}
+.sky-backdrop::after {
+  content: ''; position: absolute; inset: 0;
+  background-image: radial-gradient(rgb(255 255 255 / 0.05) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: linear-gradient(180deg, rgb(0 0 0 / 0.6), transparent 70%);
+}
+
+@layer components {
+  /* Liquid-glass bubble lettering for the Flight Log name */
+  .wordmark {
+    font-family: 'Fredoka', 'Geist Variable', system-ui, sans-serif;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    line-height: 1;
+    white-space: nowrap;
+    background: linear-gradient(180deg, #ffffff 0%, #eaf5ff 28%, #9fd0ff 55%, #5aa6ff 78%, #dff0ff 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    -webkit-text-stroke: 0.6px rgb(255 255 255 / 0.55);
+    filter: drop-shadow(0 0 6px rgb(110 180 255 / 0.55)) drop-shadow(0 2px 2px rgb(4 12 30 / 0.6));
+  }
+
+  /* Liquid glass: translucent fill, backdrop blur, fine edge highlight, soft depth. */
+  .glass {
+    position: relative;
+    background:
+      linear-gradient(180deg, rgb(255 255 255 / 0.055), rgb(255 255 255 / 0.015) 40%, rgb(255 255 255 / 0) 100%),
+      rgb(var(--night) / var(--glass-a));
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(150%);
+    backdrop-filter: blur(var(--glass-blur)) saturate(150%);
+    @apply shadow-glass rounded-xl2;
+  }
+  .glass::before {
+    /* top edge light transmission */
+    content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+    padding: 1px;
+    background: linear-gradient(180deg, rgb(255 255 255 / 0.16), rgb(255 255 255 / 0.03) 30%, rgb(255 255 255 / 0) 60%, rgb(255 255 255 / 0.05));
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude;
+  }
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .glass { background: rgb(var(--night) / 0.96); }
+  }
+  .glass-strong { @apply glass; background: linear-gradient(180deg, rgb(255 255 255 / 0.06), rgb(255 255 255 / 0.02)), rgb(var(--night) / 0.86); }
+  .glass-hover { transition: transform .25s cubic-bezier(.2,.7,.2,1), box-shadow .25s, background-color .25s; }
+  .glass-hover:hover { transform: translateY(-2px); @apply shadow-lift; }
+  .glass-hover:active { transform: translateY(0) scale(.995); }
+
+  .well { @apply rounded-xl bg-deep/60 ring-1 ring-white/[0.06]; }
+
+  .label { @apply text-[11px] font-medium uppercase tracking-[0.14em] text-muted; }
+  .num { font-variant-numeric: tabular-nums; }
+  .mono { @apply font-mono num; letter-spacing: -0.01em; }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-3.5 h-10 text-sm font-medium transition
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ice/70 disabled:opacity-40 disabled:pointer-events-none select-none whitespace-nowrap;
+  }
+  .btn:active { transform: scale(.97); }
+  .btn-primary { @apply btn text-white; background: linear-gradient(180deg, rgb(86 152 255), rgb(var(--accent))); box-shadow: 0 1px 0 rgb(255 255 255 / 0.25) inset, 0 8px 24px -8px rgb(59 130 246 / 0.65); }
+  .btn-primary:hover { filter: brightness(1.08); }
+  .btn-glass { @apply btn text-fg bg-white/[0.06] ring-1 ring-white/10 hover:bg-white/[0.1]; }
+  .btn-ghost { @apply btn text-muted hover:text-fg hover:bg-white/[0.06]; }
+  .btn-danger { @apply btn text-white bg-bad/90 hover:bg-bad; }
+  .btn-sm { @apply h-8 px-2.5 text-[13px] rounded-lg; }
+  .btn-icon { @apply btn h-9 w-9 px-0; }
+
+  .input {
+    @apply w-full h-10 rounded-xl bg-deep/70 px-3 text-sm text-fg placeholder:text-faint ring-1 ring-white/[0.08]
+      focus:outline-none focus:ring-2 focus:ring-accent/70 transition;
+  }
+  textarea.input { @apply h-auto py-2.5 leading-relaxed; }
+  select.input { @apply pr-8 appearance-none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3bd' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; }
+  .input-mono { @apply input font-mono num uppercase tracking-wide; }
+
+  .chip { @apply inline-flex items-center gap-1.5 rounded-full px-2.5 h-6 text-[11px] font-medium ring-1 ring-white/10 bg-white/[0.05] text-muted whitespace-nowrap; }
+  .chip-on { @apply bg-accent/20 text-ice ring-accent/40; }
+
+  .table-row { @apply transition-colors hover:bg-white/[0.035]; }
+  .divider { @apply h-px bg-white/[0.07]; }
+  .link { @apply text-ice hover:text-white underline-offset-4 hover:underline; }
+
+  .skeleton { @apply relative overflow-hidden rounded-lg bg-white/[0.05]; }
+  .skeleton::after { content: ''; position: absolute; inset: 0; transform: translateX(-100%); background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.06), transparent); animation: shimmer 1.6s infinite; }
+
+  .route-line { background: linear-gradient(90deg, rgb(var(--accent) / 0.0), rgb(var(--accent)) 30%, rgb(var(--ice)) 70%, rgb(var(--ice) / 0)); }
+}
+
+/* Scrollbars */
+* { scrollbar-width: thin; scrollbar-color: rgb(255 255 255 / 0.14) transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb { background: rgb(255 255 255 / 0.12); border-radius: 99px; border: 3px solid transparent; background-clip: padding-box; }
+
+:focus-visible { outline: 2px solid rgb(var(--ice) / 0.8); outline-offset: 2px; }
+
+/* Recharts polish */
+.recharts-cartesian-grid line { stroke: rgb(255 255 255 / 0.06); }
+.recharts-text { fill: rgb(var(--muted)); font-size: 11px; }
+.recharts-surface:focus, .recharts-wrapper:focus, .recharts-sector:focus { outline: none; }
+
+/* Date/time inputs on dark */
+input[type='date']::-webkit-calendar-picker-indicator,
+input[type='time']::-webkit-calendar-picker-indicator { filter: invert(0.75); cursor: pointer; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important; }
+}
+
+/* Print: reports render on white paper */
+@media print {
+  @page { margin: 14mm; }
+  body { background: #fff !important; color: #0b1222 !important; }
+  .no-print, .sky-backdrop, nav, header, aside { display: none !important; }
+  .print-area { display: block !important; position: static !important; }
+  .print-area * { color: #0b1222 !important; background: transparent !important; box-shadow: none !important; -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+  .print-area table { border-collapse: collapse; width: 100%; }
+  .print-area th, .print-area td { border-bottom: 1px solid #d6dbe4 !important; }
+  main { padding: 0 !important; margin: 0 !important; }
+}

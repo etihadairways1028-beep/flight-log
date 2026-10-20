@@ -1,0 +1,174 @@
+import type { AirportRef, Flight, FlightCategory, FlightStatus, Settings } from './types';
+import { deriveDurations, isValidISODate, todayISO } from './time';
+import { distanceBetween } from './geo';
+import { aircraftType } from './aircraftTypes';
+
+export const uid = (p = 'f') => `${p}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+
+export function emptyFlight(s?: Partial<Settings>): Flight {
+  const now = new Date().toISOString();
+  const t = aircraftType(s?.defaultAircraft);
+  return {
+    id: uid(),
+    date: todayISO(),
+    flightNumber: '',
+    callsign: '',
+    category: s?.defaultCategory ?? 'real',
+    status: 'completed',
+    airline: '',
+    airlineCode: '',
+    operator: '',
+    dep: null,
+    arr: null,
+    aircraft: { typeCode: t?.code ?? '', manufacturer: t?.manufacturer ?? '', model: t?.model ?? '', variant: '', registration: '', nickname: '' },
+    times: { schedOut: null, schedIn: null, offBlock: null, takeoff: null, landing: null, onBlock: null },
+    flightMinutes: null,
+    flightMinutesSource: null,
+    blockMinutes: null,
+    blockMinutesSource: null,
+    plannedRoute: '',
+    actualRoute: '',
+    distanceKm: null,
+    recordedDistanceKm: null,
+    cruiseAltitudeFt: null,
+    flightLevel: '',
+    avgGroundSpeedKt: null,
+    maxGroundSpeedKt: null,
+    configNotes: '',
+    purpose: '',
+    seat: '',
+    role: s?.defaultCategory === 'simulator' ? 'sim-pilot' : s?.profile === 'enthusiast' ? 'passenger' : '',
+    crew: '',
+    weather: '',
+    passengers: null,
+    fuel: null,
+    fuelUnit: 'kg',
+    takeoffsDay: null,
+    takeoffsNight: null,
+    landingsDay: null,
+    landingsNight: null,
+    rating: null,
+    tags: [],
+    photos: [],
+    notes: '',
+    simulator: s?.defaultCategory === 'simulator' ? s?.defaultSimulator ?? '' : '',
+    source: 'manual',
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+/** Recompute derived fields before saving. */
+export function finalizeFlight(f: Flight): Flight {
+  const d = deriveDurations(f);
+  return { ...f, ...d, distanceKm: distanceBetween(f.dep, f.arr), updatedAt: new Date().toISOString() };
+}
+
+/** Which useful fields are still missing — drives the "incomplete" amber state. */
+export function missingFields(f: Flight): string[] {
+  const m: string[] = [];
+  if (!f.dep) m.push('departure');
+  if (!f.arr) m.push('arrival');
+  if (!f.aircraft.typeCode && !f.aircraft.model) m.push('aircraft');
+  if (f.status === 'completed' && f.flightMinutes == null && f.blockMinutes == null) m.push('duration');
+  return m;
+}
+
+export const COUNTED_STATUSES: FlightStatus[] = ['completed', 'diverted', 'draft'];
+/** Flights that count toward totals. Planned and cancelled flights never do. */
+export const isCounted = (f: Flight) => COUNTED_STATUSES.includes(f.status);
+export const isSim = (f: Flight) => f.category === 'simulator';
+
+export function routeKey(f: Flight, directional = false): string | null {
+  if (!f.dep || !f.arr) return null;
+  const a = f.dep.iata || f.dep.ident, b = f.arr.iata || f.arr.ident;
+  if (directional) return `${a}→${b}`;
+  return [a, b].sort().join('–');
+}
+
+export function aircraftLabel(f: Flight): string {
+  const t = aircraftType(f.aircraft.typeCode);
+  if (f.aircraft.model) return `${f.aircraft.manufacturer ? f.aircraft.manufacturer + ' ' : ''}${f.aircraft.model}${f.aircraft.variant ? ' ' + f.aircraft.variant : ''}`.trim();
+  if (t) return `${t.manufacturer} ${t.model}`;
+  return f.aircraft.typeCode || 'Unknown aircraft';
+}
+export function aircraftShort(f: Flight): string {
+  const t = aircraftType(f.aircraft.typeCode);
+  if (f.aircraft.model) return f.aircraft.model + (f.aircraft.variant ? ` ${f.aircraft.variant}` : '');
+  return t?.model ?? f.aircraft.typeCode ?? '—';
+}
+export function typeKey(f: Flight): string {
+  return (f.aircraft.typeCode || f.aircraft.model || '').toUpperCase() || 'UNKNOWN';
+}
+
+// ── Import / restore validation ─────────────────────────────────────────────
+const CATS: FlightCategory[] = ['real', 'simulator', 'training', 'ferry', 'private', 'commercial', 'other'];
+const STATUSES: FlightStatus[] = ['completed', 'planned', 'cancelled', 'diverted', 'draft'];
+const num = (v: unknown): number | null => {
+  if (v === '' || v == null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+const str = (v: unknown) => (typeof v === 'string' ? v : v == null ? '' : String(v));
+const inst = (v: unknown): string | null => {
+  if (!v) return null;
+  const t = Date.parse(String(v));
+  return Number.isFinite(t) ? new Date(t).toISOString().replace('.000Z', 'Z') : null;
+};
+function airportRef(v: any): AirportRef | null {
+  if (!v || typeof v !== 'object' || !v.ident) return null;
+  return {
+    ident: str(v.ident).toUpperCase(), iata: str(v.iata).toUpperCase(), name: str(v.name), city: str(v.city), country: str(v.country),
+    continent: str(v.continent), lat: num(v.lat), lon: num(v.lon), tz: str(v.tz) || 'UTC', source: v.source === 'custom' ? 'custom' : 'dataset',
+  };
+}
+
+/** Coerce an unknown object (JSON backup) into a valid Flight, or return an error. */
+export function coerceFlight(raw: any): { flight?: Flight; error?: string } {
+  if (!raw || typeof raw !== 'object') return { error: 'Not an object' };
+  if (!isValidISODate(str(raw.date))) return { error: `Invalid date "${str(raw.date)}"` };
+  const base = emptyFlight();
+  const f: Flight = {
+    ...base,
+    id: str(raw.id) || base.id,
+    date: str(raw.date),
+    flightNumber: str(raw.flightNumber),
+    callsign: str(raw.callsign),
+    category: CATS.includes(raw.category) ? raw.category : 'real',
+    status: STATUSES.includes(raw.status) ? raw.status : 'completed',
+    airline: str(raw.airline),
+    airlineCode: str(raw.airlineCode),
+    operator: str(raw.operator),
+    dep: airportRef(raw.dep),
+    arr: airportRef(raw.arr),
+    aircraft: {
+      typeCode: str(raw.aircraft?.typeCode).toUpperCase(), manufacturer: str(raw.aircraft?.manufacturer), model: str(raw.aircraft?.model),
+      variant: str(raw.aircraft?.variant), registration: str(raw.aircraft?.registration).toUpperCase(), nickname: str(raw.aircraft?.nickname),
+    },
+    times: {
+      schedOut: inst(raw.times?.schedOut), schedIn: inst(raw.times?.schedIn), offBlock: inst(raw.times?.offBlock),
+      takeoff: inst(raw.times?.takeoff), landing: inst(raw.times?.landing), onBlock: inst(raw.times?.onBlock),
+    },
+    flightMinutes: num(raw.flightMinutes),
+    flightMinutesSource: raw.flightMinutesSource === 'computed' || raw.flightMinutesSource === 'manual' ? raw.flightMinutesSource : num(raw.flightMinutes) != null ? 'manual' : null,
+    blockMinutes: num(raw.blockMinutes),
+    blockMinutesSource: raw.blockMinutesSource === 'computed' || raw.blockMinutesSource === 'manual' ? raw.blockMinutesSource : num(raw.blockMinutes) != null ? 'manual' : null,
+    plannedRoute: str(raw.plannedRoute), actualRoute: str(raw.actualRoute),
+    recordedDistanceKm: num(raw.recordedDistanceKm), cruiseAltitudeFt: num(raw.cruiseAltitudeFt), flightLevel: str(raw.flightLevel),
+    avgGroundSpeedKt: num(raw.avgGroundSpeedKt), maxGroundSpeedKt: num(raw.maxGroundSpeedKt), configNotes: str(raw.configNotes),
+    purpose: str(raw.purpose), seat: str(raw.seat), role: raw.role ?? '', crew: str(raw.crew), weather: str(raw.weather),
+    passengers: num(raw.passengers), fuel: num(raw.fuel), fuelUnit: ['kg', 'lb', 'l', 'gal'].includes(raw.fuelUnit) ? raw.fuelUnit : 'kg',
+    takeoffsDay: num(raw.takeoffsDay), takeoffsNight: num(raw.takeoffsNight), landingsDay: num(raw.landingsDay), landingsNight: num(raw.landingsNight),
+    rating: num(raw.rating), tags: Array.isArray(raw.tags) ? raw.tags.map(str).filter(Boolean) : [],
+    photos: Array.isArray(raw.photos) ? raw.photos.map(str) : [], notes: str(raw.notes), simulator: str(raw.simulator),
+    source: raw.source ?? 'json', createdAt: str(raw.createdAt) || base.createdAt, updatedAt: str(raw.updatedAt) || base.updatedAt,
+  };
+  const fin = finalizeFlight(f);
+  fin.updatedAt = f.updatedAt;
+  return { flight: fin };
+}
+
+/** Duplicate signature: same date, route and flight number/callsign. */
+export function dupKey(f: Pick<Flight, 'date' | 'dep' | 'arr' | 'flightNumber' | 'callsign'>): string {
+  return [f.date, f.dep?.ident ?? '', f.arr?.ident ?? '', (f.flightNumber || f.callsign || '').replace(/\s+/g, '').toUpperCase()].join('|');
+}
