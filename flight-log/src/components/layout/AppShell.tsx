@@ -356,12 +356,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   );
 }
 
-const GO: Record<string, string> = { o: '/', f: '/flights', a: '/analytics', m: '/map', p: '/airports', c: '/calendar', r: '/reports', s: '/settings', h: '/achievements' };
+const GO: Record<string, string> = { l: '/live', o: '/', f: '/flights', a: '/analytics', m: '/map', p: '/airports', c: '/calendar', r: '/reports', s: '/settings', h: '/achievements' };
 
 function ShortcutsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const rows: [string[], string][] = [
     [['N'], 'Log a new flight'], [['⌘', 'K'], 'Search everything'], [['/'], 'Search everything'], [['?'], 'Show this list'],
-    [['G', 'O'], 'Go to Overview'], [['G', 'F'], 'Go to My Flights'], [['G', 'A'], 'Go to Analytics'], [['G', 'M'], 'Go to the map'],
+    [['G', 'O'], 'Go to Overview'], [['G', 'F'], 'Go to My Flights'], [['G', 'A'], 'Go to Analytics'], [['G', 'M'], 'Go to the map'], [['G', 'L'], 'Go to Sim Live'],
     [['G', 'P'], 'Go to Airports'], [['G', 'C'], 'Go to Calendar'], [['G', 'H'], 'Go to Achievements'], [['G', 'R'], 'Go to Reports'], [['G', 'S'], 'Go to Settings'],
     [['Esc'], 'Close a dialog'],
   ];

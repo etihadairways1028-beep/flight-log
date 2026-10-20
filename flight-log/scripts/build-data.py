@@ -41,6 +41,21 @@ for r in csv.DictReader(open(os.path.join(src, 'oa.csv'), encoding='utf-8')):
     elif len(ident) == 4 and ident.isalpha():
         ext.append(rec)
 json.dump(core, open(os.path.join(out, 'airports.json'), 'w'), separators=(',', ':'), ensure_ascii=False)
+# runways for the core airports: ident -> [[le, he, length_ft, width_ft, surface, lighted, le_heading_true]]
+core_ids = {r[0] for r in core}
+oa_to_ident = {}
+for r in csv.DictReader(open(os.path.join(src, 'oa.csv'), encoding='utf-8')):
+    oa_to_ident[r['ident']] = (r['icao_code'] or r['gps_code'] or r['ident']).strip().upper()
+rw = {}
+if os.path.exists(os.path.join(src, 'runways.csv')):
+    for r in csv.DictReader(open(os.path.join(src, 'runways.csv'), encoding='utf-8')):
+        if r['closed'] == '1': continue
+        ident = oa_to_ident.get(r['airport_ident'])
+        if ident not in core_ids or not r['le_ident'] or r['le_ident'].startswith('H'): continue
+        num = lambda v: int(float(v)) if v not in ('', None) else None
+        hdg = r['le_heading_degT']
+        rw.setdefault(ident, []).append([r['le_ident'], r['he_ident'], num(r['length_ft']), num(r['width_ft']), r['surface'].upper()[:12], 1 if r['lighted'] == '1' else 0, round(float(hdg)) if hdg else None])
+    json.dump(rw, open(os.path.join(out, 'runways.json'), 'w'), separators=(',', ':'), ensure_ascii=False)
 json.dump(ext, open(os.path.join(out, 'airports-ext.json'), 'w'), separators=(',', ':'), ensure_ascii=False)
 # airlines
 al = []

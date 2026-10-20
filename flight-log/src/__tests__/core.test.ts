@@ -327,3 +327,84 @@ describe('simbrief OFP', () => {
     expect(coerceFlight(JSON.parse(JSON.stringify(f))).flight!.flightPlan!.fixes.length).toBe(4);
   });
 });
+
+import { fullRouteString, procedures } from '../lib/simbrief';
+describe('full route', () => {
+  const fx = (ident: string, airway: string, sid = false) => ({ ident, name: '', type: 'wpt', lat: 0, lon: 0, altFt: null, airway, stage: '', elapsedMin: null, isSidStar: sid });
+  const fixes = [fx('RW31R', 'BUBI1A', true), fx('BUBIN', 'BUBI1A', true), fx('KAPAX', 'UL425'), fx('PURNI', 'UL425'), fx('TOTAL', 'DCT'), fx('ELALO', 'DCT'), fx('BIKTA', 'KITO1B', true), fx('KITOR', 'KITO1B', true)];
+  it('reconstructs SID, airways, DCT legs and STAR', () => {
+    expect(procedures(fixes as any)).toEqual({ sid: 'BUBI1A', star: 'KITO1B' });
+    expect(fullRouteString('OMAA', 'WSSS', '31R', '20C', fixes as any)).toBe('OMAA/31R BUBI1A BUBIN UL425 PURNI DCT TOTAL DCT ELALO KITO1B KITOR WSSS/20C');
+  });
+});
+
+import { toMsfsPln, toXplaneFms } from '../lib/planExport';
+describe('plan export', () => {
+  it('writes MSFS .pln and X-Plane .fms', () => {
+    const f = parseOfp({
+      params: { airac: '2610', units: 'kgs' }, general: { route: 'BUBI1A BUBIN UL425 PURNI', initial_altitude: '37000' },
+      origin: { icao_code: 'OMAA', plan_rwy: '31R', elevation: '88' }, destination: { icao_code: 'WSSS', plan_rwy: '20C', elevation: '22' }, aircraft: { icaocode: 'B789' },
+      navlog: { fix: [
+        { ident: 'BUBIN', type: 'wpt', pos_lat: '24.9', pos_long: '55.3', via_airway: 'BUBI1A', is_sid_star: '1', icao_region: 'OM', altitude_feet: '9000', distance: '20' },
+        { ident: 'PURNI', type: 'wpt', pos_lat: '22.0', pos_long: '62.0', via_airway: 'UL425', is_sid_star: '0', icao_region: 'OO', altitude_feet: '37000', distance: '400' },
+        { ident: 'VTK', type: 'vor', frequency: '113.500', pos_lat: '3.0', pos_long: '101.0', via_airway: 'DCT', is_sid_star: '0', altitude_feet: '37000', distance: '2000' },
+        { ident: 'KITOR', type: 'wpt', pos_lat: '1.8', pos_long: '103.5', via_airway: 'KITO1B', is_sid_star: '1', altitude_feet: '6000', distance: '150' },
+      ] },
+    });
+    expect(f.flightPlan!.sid).toBe('BUBI1A');
+    expect(f.flightPlan!.star).toBe('KITO1B');
+    expect(f.flightPlan!.fixes[3].cumNm).toBe(2570);
+    expect(f.flightPlan!.fullRoute).toBe('OMAA/31R BUBI1A BUBIN UL425 PURNI DCT VTK KITO1B KITOR WSSS/20C');
+    const pln = toMsfsPln(f);
+    expect(pln).toContain('<DepartureID>OMAA</DepartureID>');
+    expect(pln).toContain('<DepartureFP>BUBI1A</DepartureFP>');
+    expect(pln).toContain('<RunwayNumberFP>31</RunwayNumberFP>');
+    expect(pln).toContain('<ATCAirway>UL425</ATCAirway>');
+    expect(pln).toContain('<ArrivalFP>KITO1B</ArrivalFP>');
+    expect(pln).toContain('<ICAORegion>OM</ICAORegion>');
+    expect(pln).toMatch(/<DepartureLLA>N24° 26' \d/);
+    const fms = toXplaneFms(f);
+    expect(fms.split('\n').slice(0, 2)).toEqual(['I', '1100 Version']);
+    expect(fms).toContain('SID BUBI1A');
+    expect(fms).toContain('DEPRWY RW31R');
+    expect(fms).toContain('STAR KITO1B');
+    expect(fms).toContain('NUMENR 4');
+    expect(fms).toContain('11 PURNI UL425 37000.000000 22.000000 62.000000');
+    expect(fms).toContain('3 VTK DRCT');
+  });
+});
+
+import { newRecording, step, recordingToFlight, landingRating } from '../lib/recorder';
+describe('flight recorder', () => {
+  it('detects off-block, takeoff, landing, on-block and landing rate', () => {
+    const A = findAirport('OMAA')!, D = findAirport('OMDB')!;
+    let st = newRecording();
+    let t = 1773500000;
+    const S = (o: any) => ({ t, lat: A.lat!, lon: A.lon!, altFt: 88, aglFt: 0, gsKt: 0, iasKt: 0, hdg: 310, vsFpm: 0, onGround: true, parkingBrake: true, engines: 2, paused: false, ...o });
+    st = step(st, S({}));
+    expect(st.phase).toBe('preflight');
+    t += 60; st = step(st, S({ gsKt: 12, parkingBrake: false }));
+    expect(st.phase).toBe('taxi-out'); expect(st.offBlock).toBe(t);
+    t += 600; st = step(st, S({ gsKt: 150, onGround: false, altFt: 400, vsFpm: 2000 }));
+    expect(st.phase).toBe('airborne'); expect(st.takeoff).toBe(t);
+    // fly towards Dubai in 10 steps
+    for (let i = 1; i <= 10; i++) { t += 120; st = step(st, S({ lat: A.lat! + (D.lat! - A.lat!) * i / 10, lon: A.lon! + (D.lon! - A.lon!) * i / 10, gsKt: 280, onGround: false, altFt: i < 9 ? 15000 : 1500, vsFpm: i < 9 ? 0 : -700 })); }
+    t += 2; st = step(st, S({ lat: D.lat!, lon: D.lon!, gsKt: 140, onGround: false, altFt: 70, vsFpm: -180 }));
+    t += 1; st = step(st, S({ lat: D.lat!, lon: D.lon!, gsKt: 135, onGround: true, altFt: 62, vsFpm: -150 }));
+    expect(st.phase).toBe('taxi-in'); expect(st.landingVs).toBe(-180);
+    t += 300; st = step(st, S({ lat: D.lat!, lon: D.lon!, gsKt: 0, parkingBrake: true }));
+    t += 6; st = step(st, S({ lat: D.lat!, lon: D.lon!, gsKt: 0, parkingBrake: true }));
+    expect(st.phase).toBe('arrived');
+    const f = recordingToFlight({ ...st, sim: 'X-Plane 12', aircraft: 'B738' }, DEFAULT_SETTINGS);
+    expect(f.dep?.ident).toBe('OMAA');
+    expect(f.arr?.ident).toBe('OMDB');
+    expect(f.flightMinutes).toBe(Math.round((st.landing! - st.takeoff!) / 60));
+    expect(f.blockMinutes).toBe(Math.round((st.onBlock! - st.offBlock!) / 60));
+    expect(f.recordedDistanceKm).toBeGreaterThan(100);
+    expect(f.landingRateFpm).toBe(-180);
+    expect(f.aircraft.typeCode).toBe('B738');
+    expect(f.simulator).toBe('X-Plane 12');
+    expect((f.landingsDay ?? 0) + (f.landingsNight ?? 0)).toBe(1);
+    expect(landingRating(-180)?.label).toBe('Smooth');
+  });
+});

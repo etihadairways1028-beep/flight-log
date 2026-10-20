@@ -2,7 +2,7 @@
 // public XML fetcher (https://www.simbrief.com/api/xml.fetcher.php?username=…&json=1).
 // No API key is needed for reading your own latest flight plan. Requests go straight
 // from the browser; if SimBrief blocks the request (CORS / network), we report it.
-import type { Flight, PlanFix } from './types';
+import type { AirportBrief, Flight, PlanFix } from './types';
 import { emptyFlight, finalizeFlight } from './flight';
 import { findAirport, toRef } from './airports';
 import { aircraftType } from './aircraftTypes';
@@ -68,16 +68,37 @@ export function parseOfp(j: any, opts: { asFlown?: boolean } = {}): Flight {
   f.role = 'sim-pilot';
   f.tags = ['simbrief'];
   const units: 'kg' | 'lb' = /lb/i.test(String(j.params?.units ?? '')) ? 'lb' : 'kg';
-  const fixes: PlanFix[] = asList(j.navlog?.fix).map((x: any) => ({
-    ident: String(x.ident ?? ''), name: String(x.name ?? ''), type: String(x.type ?? ''),
-    lat: Number(x.pos_lat), lon: Number(x.pos_long), altFt: numOr(x.altitude_feet),
-    airway: String(x.via_airway ?? ''), stage: String(x.stage ?? ''), elapsedMin: numOr(x.time_total) != null ? Math.round(Number(x.time_total) / 60) : null,
-  })).filter((x: PlanFix) => Number.isFinite(x.lat) && Number.isFinite(x.lon) && x.ident);
+  let cum = 0;
+  const fixes: PlanFix[] = asList(j.navlog?.fix).map((x: any) => {
+    const leg = numOr(x.distance);
+    if (leg != null) cum += leg;
+    return {
+      ident: String(x.ident ?? ''), name: String(x.name ?? ''), type: String(x.type ?? ''),
+      lat: Number(x.pos_lat), lon: Number(x.pos_long), altFt: numOr(x.altitude_feet),
+      airway: String(x.via_airway ?? ''), stage: String(x.stage ?? ''), elapsedMin: numOr(x.time_total) != null ? Math.round(Number(x.time_total) / 60) : null,
+      isSidStar: String(x.is_sid_star ?? '0') === '1',
+      frequency: x.frequency && String(x.frequency) !== '0' ? String(x.frequency) : '',
+      legNm: leg, cumNm: leg != null ? Math.round(cum) : null,
+      trackTrue: numOr(x.track_true), ias: numOr(x.ind_airspeed), tas: numOr(x.true_airspeed),
+      mach: x.mach ? String(x.mach) : '', windDir: numOr(x.wind_dir), windKt: numOr(x.wind_spd), oatC: numOr(x.oat),
+      fuelOnboard: numOr(x.fuel_plan_onboard), groundFt: numOr(x.ground_height), fir: String(x.fir ?? ''), region: String(x.icao_region ?? ''),
+    };
+  }).filter((x: PlanFix) => Number.isFinite(x.lat) && Number.isFinite(x.lon) && x.ident);
+  const procs = procedures(fixes);
+  const brief = (a: any): AirportBrief | undefined => a ? ({
+    runway: String(a.plan_rwy ?? ''), transAlt: numOr(a.trans_alt), transLevel: numOr(a.trans_level),
+    metar: String(a.metar ?? ''), taf: String(a.taf ?? ''), elevationFt: numOr(a.elevation),
+  }) : undefined;
   const altn = asList(j.alternate)[0] as any;
   const pdf = j.files?.pdf?.link ? `${j.files?.directory ?? 'https://www.simbrief.com/ofp/flightplans/'}${j.files.pdf.link}` : '';
   f.flightPlan = {
     source: 'simbrief',
     route: String(j.general?.route ?? ''),
+    fullRoute: fullRouteString(f.dep!.ident, f.arr!.ident, String(j.origin?.plan_rwy ?? ''), String(j.destination?.plan_rwy ?? ''), fixes),
+    sid: procs.sid, star: procs.star,
+    depBrief: brief(j.origin), arrBrief: brief(j.destination),
+    altnBrief: altn ? { ...(brief(altn) as AirportBrief), icao: String(altn.icao_code ?? '') } : undefined,
+    initialAltFt: numOr(j.general?.initial_altitude),
     fixes,
     routeDistanceNm: numOr(j.general?.route_distance),
     airDistanceNm: numOr(j.general?.air_distance),
@@ -90,8 +111,40 @@ export function parseOfp(j: any, opts: { asFlown?: boolean } = {}): Flight {
     fuel: { ramp: numOr(j.fuel?.plan_ramp), takeoff: numOr(j.fuel?.plan_takeoff), trip: numOr(j.fuel?.est_burn), reserve: numOr(j.fuel?.reserve), alternate: numOr(j.fuel?.alternate_burn), contingency: numOr(j.fuel?.contingency), landing: numOr(j.fuel?.plan_landing) },
     avgWind: j.general?.avg_wind_comp != null ? `${Number(j.general.avg_wind_comp) >= 0 ? 'Tailwind' : 'Headwind'} ${Math.abs(Number(j.general.avg_wind_comp))} kt` : '',
     ofpUrl: pdf,
+    downloads: Object.entries(j.fms_downloads ?? {}).filter(([k, v]: [string, any]) => k !== 'directory' && v?.link).map(([, v]: [string, any]) => ({ name: String(v.name ?? 'Flight plan file'), url: `${j.fms_downloads.directory ?? ''}${v.link}` })),
     requestId: String(j.params?.request_id ?? ''),
     generatedAt: numOr(j.params?.time_generated) ? new Date(Number(j.params.time_generated) * 1000).toISOString() : null,
   };
   return finalizeFlight(f);
+}
+
+/** SID = leading procedure fixes, STAR = trailing procedure fixes (SimBrief flags them with is_sid_star). */
+export function procedures(fixes: PlanFix[]): { sid: string; star: string } {
+  let sid = '', star = '';
+  if (fixes.length && fixes[0].isSidStar) sid = fixes[0].airway;
+  for (let i = fixes.length - 1; i >= 0; i--) {
+    const f = fixes[i];
+    if (!f.isSidStar) break;
+    if (f.airway && f.airway !== 'DCT') star = f.airway;
+  }
+  if (sid === 'DCT') sid = '';
+  return { sid, star: star === sid ? '' : star };
+}
+
+/** Reconstruct the complete route as "OMAA/31R SID FIX AWY FIX … STAR WSSS/20C" from the navlog. */
+export function fullRouteString(dep: string, arr: string, depRwy: string, arrRwy: string, fixes: PlanFix[]): string {
+  const parts: string[] = [depRwy ? `${dep}/${depRwy}` : dep];
+  let lastVia = '';
+  const pts = fixes.filter((f) => f.type !== 'toc' && f.type !== 'tod' && f.ident !== dep && f.ident !== arr && !/^T\/?[OC]D?$/.test(f.ident));
+  pts.forEach((f, i) => {
+    const via = f.airway || 'DCT';
+    const next = pts[i + 1];
+    const nextVia = next ? next.airway || 'DCT' : null;
+    if (via === 'DCT') { parts.push('DCT', f.ident); lastVia = 'DCT'; return; }
+    if (via !== lastVia) { parts.push(via); lastVia = via; }
+    // inside an airway or procedure only the fix where it ends is printed
+    if (nextVia !== via) parts.push(f.ident);
+  });
+  parts.push(arrRwy ? `${arr}/${arrRwy}` : arr);
+  return parts.join(' ').replace(/\s+/g, ' ');
 }

@@ -114,10 +114,16 @@ export interface Flight {
   pilot?: PilotTimes;
   /** Filed flight plan (e.g. from a SimBrief OFP). */
   flightPlan?: FlightPlan;
-  source: 'manual' | 'csv' | 'json' | 'simbrief' | 'demo' | 'duplicate';
+  /** Recorded track from the sim bridge (simplified). */
+  track?: TrackPoint[];
+  /** Vertical speed at touchdown, feet per minute (negative = descending). */
+  landingRateFpm?: number | null;
+  source: 'manual' | 'csv' | 'json' | 'simbrief' | 'demo' | 'duplicate' | 'sim';
   createdAt: string;
   updatedAt: string;
 }
+
+export interface TrackPoint { t: number; lat: number; lon: number; altFt: number; gsKt: number }
 
 export interface PlanFix {
   ident: string;
@@ -129,11 +135,42 @@ export interface PlanFix {
   airway: string;        // airway or DCT used to reach this fix
   stage: string;         // CLB / CRZ / DSC
   elapsedMin: number | null;
+  isSidStar?: boolean;   // part of a SID or STAR procedure
+  frequency?: string;    // navaid frequency, when the fix is a VOR/NDB
+  legNm?: number | null;
+  cumNm?: number | null; // distance from departure
+  trackTrue?: number | null;
+  ias?: number | null;
+  tas?: number | null;
+  mach?: string;
+  windDir?: number | null;
+  windKt?: number | null;
+  oatC?: number | null;
+  fuelOnboard?: number | null;
+  groundFt?: number | null;
+  fir?: string;
+  region?: string;      // ICAO region code (needed by MSFS flight plans)
+}
+
+export interface AirportBrief {
+  runway: string;
+  transAlt: number | null;
+  transLevel: number | null;
+  metar: string;
+  taf: string;
+  elevationFt: number | null;
 }
 
 export interface FlightPlan {
   source: 'simbrief' | 'manual';
   route: string;
+  fullRoute?: string;      // reconstructed from the navlog, including SID and STAR
+  sid?: string;
+  star?: string;
+  depBrief?: AirportBrief;
+  arrBrief?: AirportBrief;
+  altnBrief?: AirportBrief & { icao: string };
+  initialAltFt?: number | null;
   fixes: PlanFix[];
   routeDistanceNm: number | null;
   airDistanceNm: number | null;
@@ -146,6 +183,7 @@ export interface FlightPlan {
   fuel: { ramp: number | null; takeoff: number | null; trip: number | null; reserve: number | null; alternate: number | null; contingency: number | null; landing: number | null };
   avgWind: string;
   ofpUrl: string;
+  downloads?: { name: string; url: string }[];  // SimBrief's own exported plan files
   requestId: string;
   generatedAt: string | null;
 }

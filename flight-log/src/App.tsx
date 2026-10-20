@@ -12,6 +12,7 @@ const Flights = lazy(() => import('./pages/Flights'));
 const FlightDetail = lazy(() => import('./pages/FlightDetail'));
 const Analytics = lazy(() => import('./pages/Analytics'));
 const MapPage = lazy(() => import('./pages/MapPage'));
+const Live = lazy(() => import('./pages/Live'));
 const Aircraft = lazy(() => import('./pages/Aircraft'));
 const AircraftDetail = lazy(() => import('./pages/AircraftDetail'));
 const Airports = lazy(() => import('./pages/Airports'));
@@ -81,6 +82,7 @@ export default function App() {
           <Route path="/flights/:id" element={<FlightDetail />} />
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/map" element={<MapPage />} />
+          <Route path="/live" element={<Live />} />
           <Route path="/aircraft" element={<Aircraft />} />
           <Route path="/aircraft/:key" element={<AircraftDetail />} />
           <Route path="/airports" element={<Airports />} />

@@ -58,7 +58,8 @@ export default function FlightDetail() {
   const miss = missingFields(f);
   const course = f.dep?.lat != null && f.arr?.lat != null ? Math.round(initialBearing(f.dep.lat, f.dep.lon!, f.arr.lat, f.arr.lon!)) : null;
   const planPath = plannedPath(f);
-  const fitPts = planPath ?? (f.dep?.lon != null && f.arr?.lon != null ? [[f.dep.lon, f.dep.lat!], [f.arr.lon, f.arr.lat!]] as [number, number][] : undefined);
+  const trackPts = f.track && f.track.length > 1 ? f.track.map((p) => [p.lon, p.lat] as [number, number]) : null;
+  const fitPts = trackPts ?? planPath ?? (f.dep?.lon != null && f.arr?.lon != null ? [[f.dep.lon, f.dep.lat!], [f.arr.lon, f.arr.lat!]] as [number, number][] : undefined);
   const fp = f.flightPlan;
   const depDelay = minutesDelta(f.times.schedOut, f.times.offBlock);
   const arrDelay = minutesDelta(f.times.schedIn, f.times.onBlock);
@@ -144,9 +145,9 @@ export default function FlightDetail() {
           {/* Map */}
           {map && fitPts && (
             <Glass className="overflow-hidden p-0">
-              <WorldMap routes={map.routes} airports={map.airports} fit={fitPts} height={360} selectedRoute={map.routes[0]?.key} fixes={fp?.fixes.filter((x) => x.ident !== f.dep?.ident && x.ident !== f.arr?.ident && x.type !== 'toc' && x.type !== 'tod')} />
+              <WorldMap routes={map.routes} airports={map.airports} fit={fitPts} height={360} selectedRoute={map.routes[0]?.key} lines={trackPts && planPath ? [{ pts: planPath, color: 'rgb(94 224 239 / .6)', dash: '4 5', width: 1.4 }] : undefined} fixes={fp?.fixes.filter((x) => x.ident !== f.dep?.ident && x.ident !== f.arr?.ident && x.type !== 'toc' && x.type !== 'tod')} />
               <div className="flex items-center justify-between border-t border-white/[0.06] px-4 py-2.5 text-[12px] text-muted">
-                <span>{planPath ? `Filed route: ${fp!.fixes.length} fixes${fp!.routeDistanceNm ? ` · ${fmt.dist(fp!.routeDistanceNm * 1.852)} planned vs ${fmt.dist(f.distanceKm)} great-circle` : ''}` : 'Great-circle path between the airport coordinates'}</span>
+                <span>{trackPts ? `Recorded track: ${f.track!.length} points${f.recordedDistanceKm != null ? ` · ${fmt.dist(f.recordedDistanceKm)} flown` : ''}${planPath ? ' · dashed line is the filed route' : ''}${f.landingRateFpm != null ? ` · landed at ${Math.abs(f.landingRateFpm)} fpm` : ''}` : planPath ? `Filed route: ${fp!.fixes.length} fixes${fp!.routeDistanceNm ? ` · ${fmt.dist(fp!.routeDistanceNm * 1.852)} planned vs ${fmt.dist(f.distanceKm)} great-circle` : ''}` : 'Great-circle path between the airport coordinates'}</span>
                 <Link to="/map" className="link">Open full map</Link>
               </div>
             </Glass>
@@ -246,7 +247,8 @@ export default function FlightDetail() {
               {(f.takeoffsDay ?? f.takeoffsNight ?? f.landingsDay ?? f.landingsNight) != null && <KV k="T/O · LDG (day/night)" v={`${f.takeoffsDay ?? 0}/${f.takeoffsNight ?? 0} · ${f.landingsDay ?? 0}/${f.landingsNight ?? 0}`} mono />}
               {f.crew && <KV k="Crew" v={f.crew} />}
               {f.weather && <KV k={<span className="inline-flex items-center gap-1.5"><CloudSun className="h-3.5 w-3.5" />Weather</span>} v={<span className="mono text-[12px]">{f.weather}</span>} />}
-              <KV k="Source" v={{ manual: 'Entered by hand', csv: 'CSV import', json: 'Backup restore', simbrief: 'SimBrief OFP', demo: 'Demo data (fictional)', duplicate: 'Duplicated' }[f.source]} />
+              {f.landingRateFpm != null && <KV k="Landing rate" v={`${Math.abs(f.landingRateFpm)} fpm · ${landingRating(f.landingRateFpm)?.label ?? ''}`} />}
+              <KV k="Source" v={{ manual: 'Entered by hand', csv: 'CSV import', json: 'Backup restore', simbrief: 'SimBrief OFP', demo: 'Demo data (fictional)', duplicate: 'Duplicated', sim: 'Recorded from the simulator' }[f.source]} />
             </div>
             {(f.actualRoute || (f.plannedRoute && !f.flightPlan)) && (
               <div className="mt-3">
@@ -302,26 +304,99 @@ function Stat({ icon: Icon, label, value, sub, tip }: { icon: any; label: string
 
 import { ShareFlightDialog } from '../components/flight/ShareFlight';
 
-import { FileText as FileIcon, ExternalLink, Fuel as FuelIcon, Copy as CopyIcon } from 'lucide-react';
+import { FileText as FileIcon, ExternalLink, Fuel as FuelIcon, Copy as CopyIcon, Download as DownloadIcon, PlaneTakeoff, PlaneLanding, Navigation } from 'lucide-react';
+import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip as RTooltip, CartesianGrid } from 'recharts';
+import { loadRunways, findRunway, SURFACE } from '../lib/runways';
+import { toMsfsPln, toXplaneFms, planFileName } from '../lib/planExport';
+import { downloadText } from '../lib/download';
+import { useSim } from '../lib/simLink';
+import { landingRating } from '../lib/recorder';
+import { Send as SendIcon } from 'lucide-react';
+import { ChartTooltip, AXIS } from '../components/charts/ChartKit';
+import type { AirportBrief } from '../lib/types';
+
+function BriefCard({ title, icon: Icon, ident, b, proc, procLabel }: { title: string; icon: any; ident: string; b?: AirportBrief; proc?: string; procLabel: string }) {
+  const fmt = useFmt();
+  const [, force] = useState(0);
+  useEffect(() => { loadRunways().then(() => force((n) => n + 1)); }, []);
+  const r = findRunway(ident, b?.runway);
+  return (
+    <div className="min-w-0 rounded-xl bg-white/[0.03] p-3.5 ring-1 ring-white/[0.06]">
+      <div className="mb-2 flex items-center gap-2"><Icon className="h-4 w-4 text-ice" /><span className="label">{title}</span><span className="mono ml-auto text-[13px] text-fg">{ident}</span></div>
+      <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[12.5px]">
+        <span className="text-muted">Runway</span><span className="mono text-right">{b?.runway || '—'}</span>
+        {r && <><span className="text-muted">Length</span><span className="mono text-right">{r.rw.lengthFt ? `${r.rw.lengthFt.toLocaleString('en-GB')} ft` : '—'}</span></>}
+        {r && <><span className="text-muted">Surface</span><span className="text-right">{SURFACE[r.rw.surface] ?? (r.rw.surface || '—')}{r.rw.lighted ? ' · lit' : ''}</span></>}
+        {r?.heading != null && <><span className="text-muted">Heading</span><span className="mono text-right">{String(Math.round(r.heading)).padStart(3, '0')}° T</span></>}
+        <span className="text-muted">{procLabel}</span><span className="mono text-right text-live">{proc || '—'}</span>
+        {(b?.transAlt || b?.transLevel) ? <><span className="text-muted">Trans alt / level</span><span className="mono text-right">{b?.transAlt ? fmt.alt(b.transAlt) : '—'} / {b?.transLevel ? `FL${Math.round(b.transLevel / 100)}` : '—'}</span></> : null}
+      </div>
+      {b?.metar && <p className="mono mt-2.5 break-words rounded-lg bg-deep/70 p-2 text-[11px] leading-relaxed text-ice/85 ring-1 ring-white/[0.05]"><span className="text-faint">METAR </span>{b.metar}</p>}
+      {b?.taf && <details className="mt-1.5"><summary className="cursor-pointer text-[11.5px] text-muted">TAF</summary><p className="mono mt-1 break-words rounded-lg bg-deep/70 p-2 text-[11px] leading-relaxed text-ice/85 ring-1 ring-white/[0.05]">{b.taf}</p></details>}
+    </div>
+  );
+}
+
+function SendToSim({ f }: { f: Flight }) {
+  const sim = useSim();
+  const toast = useStore((s) => s.toast);
+  const [busy, setBusy] = useState(false);
+  if (!sim.hello?.canSavePlans || (sim.status !== 'bridge' && sim.status !== 'live')) return null;
+  const xp = (sim.tel?.sim ?? sim.hello.sim ?? '').startsWith('X-Plane');
+  async function go() {
+    setBusy(true);
+    const r = await sim.sendPlan(planFileName(f, xp ? 'fms' : 'pln'), xp ? toXplaneFms(f) : toMsfsPln(f));
+    setBusy(false);
+    toast({ kind: r.ok ? 'success' : 'error', title: r.ok ? (r.loaded ? 'Plan loaded into MSFS' : `Plan saved for ${xp ? 'X-Plane' : 'MSFS'}`) : 'Couldn’t send the plan', body: r.message });
+  }
+  return <button className="btn-primary btn-sm" disabled={busy} onClick={go}><SendIcon className="h-3.5 w-3.5" />Send to {xp ? 'X-Plane' : 'MSFS'}</button>;
+}
 
 function FlightPlanCard({ f }: { f: Flight }) {
   const fmt = useFmt();
   const fp = f.flightPlan!;
   const [all, setAll] = useState(false);
   const toast = useStore((s) => s.toast);
-  const shown = all ? fp.fixes : fp.fixes.slice(0, 14);
+  const fixes = fp.fixes;
+  const shown = all ? fixes : fixes.slice(0, 16);
   const fuel = fp.fuel;
   const fu = (v: number | null) => (v == null ? '—' : `${v.toLocaleString('en-GB')} ${fp.fuelUnit}`);
+  const route = fp.fullRoute || [f.dep?.ident, fp.route, f.arr?.ident].filter(Boolean).join(' ');
+  const profile = fixes.filter((x) => x.cumNm != null).map((x) => ({ nm: x.cumNm, alt: x.altFt ?? 0, ground: x.groundFt ?? 0, ident: x.ident }));
+  const copy = (t: string, what: string) => navigator.clipboard?.writeText(t).then(() => toast({ kind: 'success', title: `${what} copied` }), () => toast({ kind: 'error', title: 'Copy blocked by the browser' }));
   return (
     <Glass className="p-5">
-      <div className="mb-3 flex flex-wrap items-center gap-2">
+      <div className="mb-4 flex flex-wrap items-center gap-2">
         <FileIcon className="h-4 w-4 text-ice" />
         <h3 className="text-[14px] font-semibold">Flight plan</h3>
         <span className="chip">{fp.source === 'simbrief' ? 'SimBrief OFP' : 'Manual'}</span>
         {fp.airac && <span className="chip">AIRAC {fp.airac}</span>}
-        {fp.ofpUrl && <a href={fp.ofpUrl} target="_blank" rel="noreferrer" className="btn-glass btn-sm ml-auto"><ExternalLink className="h-3.5 w-3.5" />Open OFP</a>}
+        {fp.sid && <span className="chip text-live ring-live/25">SID {fp.sid}</span>}
+        {fp.star && <span className="chip text-live ring-live/25">STAR {fp.star}</span>}
       </div>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="mb-4 flex flex-wrap gap-2">
+        <button className="btn-glass btn-sm" onClick={() => downloadText(planFileName(f, 'pln'), toMsfsPln(f), 'application/xml')}><DownloadIcon className="h-3.5 w-3.5" />MSFS 2020/2024 (.pln)</button>
+        <button className="btn-glass btn-sm" onClick={() => downloadText(planFileName(f, 'fms'), toXplaneFms(f), 'text/plain')}><DownloadIcon className="h-3.5 w-3.5" />X-Plane 11/12 (.fms)</button>
+        <SendToSim f={f} />
+        {fp.ofpUrl && <a href={fp.ofpUrl} target="_blank" rel="noreferrer" className="btn-glass btn-sm"><ExternalLink className="h-3.5 w-3.5" />OFP (PDF)</a>}
+        {(fp.downloads ?? []).length > 0 && (
+          <details className="relative">
+            <summary className="btn-glass btn-sm cursor-pointer list-none">SimBrief files ({fp.downloads!.length})</summary>
+            <div className="absolute z-10 mt-1 max-h-64 w-64 overflow-y-auto glass-strong rounded-xl p-1.5 shadow-lift">
+              {fp.downloads!.map((d) => <a key={d.url} href={d.url} target="_blank" rel="noreferrer" className="block truncate rounded-lg px-2.5 py-1.5 text-[12.5px] hover:bg-white/[0.07]">{d.name}</a>)}
+            </div>
+          </details>
+        )}
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-3">
+        <BriefCard title="Departure" icon={PlaneTakeoff} ident={f.dep?.ident ?? ''} b={fp.depBrief} proc={fp.sid} procLabel="SID" />
+        <BriefCard title="Arrival" icon={PlaneLanding} ident={f.arr?.ident ?? ''} b={fp.arrBrief} proc={fp.star} procLabel="STAR" />
+        <BriefCard title="Alternate" icon={Navigation} ident={fp.altnBrief?.icao || fp.alternate || '—'} b={fp.altnBrief} procLabel="Approach" />
+      </div>
+      <p className="mt-2 text-[11px] text-faint">Approach procedures and ILS frequencies aren’t part of SimBrief’s plan data or any open dataset, so check your charts or the sim’s FMC for them. Runway data: OurAirports.</p>
+
+      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
         {[
           ['Cruise', fp.cruiseFl || '—'],
           ['Planned distance', fp.routeDistanceNm != null ? fmt.dist(fp.routeDistanceNm * 1.852) : '—'],
@@ -330,37 +405,64 @@ function FlightPlanCard({ f }: { f: Flight }) {
           ['Cost index', fp.costIndex || '—'],
           ['Wind', fp.avgWind || '—'],
           ['Air distance', fp.airDistanceNm != null ? fmt.dist(fp.airDistanceNm * 1.852) : '—'],
-          ['Fixes', String(fp.fixes.length)],
+          ['Waypoints', String(fixes.length)],
         ].map(([k, v]) => <div key={k} className="rounded-xl bg-white/[0.03] p-3 ring-1 ring-white/[0.06]"><div className="text-[11px] text-muted">{k}</div><div className="mono mt-1 text-[14px]">{v}</div></div>)}
       </div>
-      {fp.route && (
+
+      <div className="mt-4">
+        <div className="mb-1.5 flex items-center justify-between"><div className="label">Full route</div><button className="btn-ghost btn-sm" onClick={() => copy(route, 'Route')}><CopyIcon className="h-3.5 w-3.5" />Copy</button></div>
+        <p className="mono break-words rounded-xl bg-deep/70 p-3 text-[12px] leading-relaxed text-ice/90 ring-1 ring-white/[0.06]">{route}</p>
+      </div>
+
+      {profile.length > 2 && (
         <div className="mt-4">
-          <div className="mb-1.5 flex items-center justify-between"><div className="label">Route</div><button className="btn-ghost btn-sm" onClick={() => { navigator.clipboard?.writeText(fp.route).then(() => toast({ kind: 'success', title: 'Route copied' }), () => {}); }}><CopyIcon className="h-3.5 w-3.5" />Copy</button></div>
-          <p className="mono break-words rounded-xl bg-deep/70 p-3 text-[12px] leading-relaxed text-ice/90 ring-1 ring-white/[0.06]">{f.dep?.ident} {fp.route} {f.arr?.ident}</p>
+          <div className="label mb-1.5">Vertical profile</div>
+          <div className="h-[170px]"><ResponsiveContainer>
+            <AreaChart data={profile} margin={{ top: 6, right: 6, left: 0, bottom: 0 }}>
+              <defs>
+                <linearGradient id="vp" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#5b9bff" stopOpacity={0.45} /><stop offset="100%" stopColor="#5b9bff" stopOpacity={0.02} /></linearGradient>
+                <linearGradient id="gr" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#8a7a5a" stopOpacity={0.7} /><stop offset="100%" stopColor="#8a7a5a" stopOpacity={0.2} /></linearGradient>
+              </defs>
+              <CartesianGrid vertical={false} />
+              <XAxis dataKey="nm" type="number" domain={[0, 'dataMax']} {...AXIS} tickFormatter={(v) => `${v} nm`} />
+              <YAxis {...AXIS} width={52} tickFormatter={(v) => (v >= 18000 ? `FL${Math.round(v / 100)}` : `${Math.round(v / 1000)}k`)} />
+              <RTooltip content={<ChartTooltip labelFormat={(v: number) => `${v} nm from departure`} format={(v: number) => `${Math.round(v).toLocaleString('en-GB')} ft`} />} />
+              <Area type="monotone" dataKey="ground" name="Terrain" stroke="#8a7a5a" fill="url(#gr)" strokeWidth={1} isAnimationActive={false} />
+              <Area type="monotone" dataKey="alt" name="Planned altitude" stroke="#a9d4ff" strokeWidth={2} fill="url(#vp)" />
+            </AreaChart>
+          </ResponsiveContainer></div>
         </div>
       )}
-      {fp.fixes.length > 0 && (
+
+      {fixes.length > 0 && (
         <div className="mt-4">
           <div className="label mb-1.5">Navigation log</div>
           <div className="overflow-x-auto rounded-xl ring-1 ring-white/[0.06]">
             <table className="w-full text-[12px]">
-              <thead><tr className="text-left text-[10.5px] uppercase tracking-wider text-faint"><th className="px-3 py-2 font-medium">Fix</th><th className="px-3 py-2 font-medium">Via</th><th className="px-3 py-2 font-medium text-right">Altitude</th><th className="px-3 py-2 font-medium text-right">Elapsed</th><th className="px-3 py-2 font-medium">Position</th></tr></thead>
+              <thead><tr className="text-left text-[10.5px] uppercase tracking-wider text-faint">{['Fix', 'Via', 'Freq', 'Alt', 'Trk', 'Wind', 'OAT', 'Dist', 'Elapsed', 'Fuel'].map((h, i) => <th key={h} className={cx('px-3 py-2 font-medium whitespace-nowrap', i > 2 && 'text-right')}>{h}</th>)}</tr></thead>
               <tbody className="divide-y divide-white/[0.05]">
                 {shown.map((x, i) => (
-                  <tr key={x.ident + i}>
-                    <td className="mono px-3 py-1.5 text-ice">{x.ident}{x.type === 'toc' || x.type === 'tod' ? '' : ''}</td>
-                    <td className="mono px-3 py-1.5 text-muted">{x.airway || '—'}</td>
+                  <tr key={x.ident + i} className={cx(x.isSidStar && 'bg-live/[0.05]', (x.type === 'toc' || x.type === 'tod') && 'text-faint')}>
+                    <td className="mono px-3 py-1.5 text-ice whitespace-nowrap">{x.ident}{x.type === 'vor' || x.type === 'ndb' ? <span className="ml-1 text-[10px] uppercase text-faint">{x.type}</span> : null}</td>
+                    <td className={cx('mono px-3 py-1.5 whitespace-nowrap', x.isSidStar ? 'text-live' : 'text-muted')}>{x.airway || '—'}</td>
+                    <td className="mono px-3 py-1.5 text-muted">{x.frequency || ''}</td>
                     <td className="mono px-3 py-1.5 text-right">{x.altFt != null ? (x.altFt >= 18000 ? `FL${Math.round(x.altFt / 100)}` : fmt.alt(x.altFt)) : '—'}</td>
+                    <td className="mono px-3 py-1.5 text-right text-muted">{x.trackTrue != null ? String(Math.round(x.trackTrue)).padStart(3, '0') : ''}</td>
+                    <td className="mono px-3 py-1.5 text-right text-muted whitespace-nowrap">{x.windDir != null && x.windKt != null ? `${String(Math.round(x.windDir)).padStart(3, '0')}/${Math.round(x.windKt)}` : ''}</td>
+                    <td className="mono px-3 py-1.5 text-right text-muted">{x.oatC != null ? `${x.oatC}°` : ''}</td>
+                    <td className="mono px-3 py-1.5 text-right text-muted">{x.cumNm ?? ''}</td>
                     <td className="mono px-3 py-1.5 text-right text-muted">{x.elapsedMin != null ? fmt.dur(x.elapsedMin) : '—'}</td>
-                    <td className="mono px-3 py-1.5 text-faint">{x.lat.toFixed(2)}, {x.lon.toFixed(2)}</td>
+                    <td className="mono px-3 py-1.5 text-right text-muted">{x.fuelOnboard != null ? x.fuelOnboard.toLocaleString('en-GB') : ''}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          {fp.fixes.length > 14 && <button className="btn-ghost btn-sm mt-2" onClick={() => setAll(!all)}>{all ? 'Show fewer' : `Show all ${fp.fixes.length} fixes`}</button>}
+          {fixes.length > 16 && <button className="btn-ghost btn-sm mt-2" onClick={() => setAll(!all)}>{all ? 'Show fewer' : `Show all ${fixes.length} waypoints`}</button>}
+          <p className="mt-1.5 text-[11px] text-faint">Highlighted rows are part of the SID or STAR. Distances in NM from departure; fuel on board in {fp.fuelUnit}.</p>
         </div>
       )}
+
       {(fuel.ramp ?? fuel.trip) != null && (
         <div className="mt-4">
           <div className="label mb-1.5 flex items-center gap-1.5"><FuelIcon className="h-3.5 w-3.5" />Fuel plan</div>

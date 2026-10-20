@@ -7,7 +7,7 @@ import { feature } from 'topojson-client';
 import world from 'world-atlas/countries-110m.json';
 import { Minus, Plus, Maximize2 } from 'lucide-react';
 import type { Flight } from '../../lib/types';
-import { isCounted, routeKey, plannedPath } from '../../lib/flight';
+import { isCounted, routeKey, bestPath } from '../../lib/flight';
 import { cx } from '../ui';
 
 const land = feature(world as any, (world as any).objects.countries) as any;
@@ -32,7 +32,7 @@ export function buildMapData(flights: Flight[]) {
     const k = routeKey(f)!;
     const r = routes.get(k) ?? { key: k, a: [d.lon, d.lat], b: [a.lon, a.lat], count: 0, flights: [], sim: 0, label: k };
     r.count++; r.flights.push(f.id);
-    if (!r.path) { const p = plannedPath(f); if (p) r.path = p; }
+    if (!r.path) { const p = bestPath(f); if (p) r.path = p.pts; }
     if (f.category === 'simulator') r.sim++;
     routes.set(k, r);
   }
@@ -58,6 +58,8 @@ export interface WorldMapProps {
   selectedAirport?: string | null;
   showLabels?: boolean;
   fixes?: { ident: string; lon: number; lat: number }[];
+  lines?: { pts: [number, number][]; color: string; dash?: string; width?: number }[];
+  live?: { lat: number; lon: number; hdg: number } | null;
   onRoute?: (r: MapRoute, at: { x: number; y: number }) => void;
   onAirport?: (a: MapAirport, at: { x: number; y: number }) => void;
   onBackground?: () => void;
@@ -65,7 +67,7 @@ export interface WorldMapProps {
   children?: React.ReactNode;
 }
 
-export function WorldMap({ routes, airports, height = 420, center = 0, fit, interactive = true, wheelZoom = false, heat = false, selectedRoute, selectedAirport, showLabels = true, fixes, onRoute, onAirport, onBackground, className, children }: WorldMapProps) {
+export function WorldMap({ routes, airports, height = 420, center = 0, fit, interactive = true, wheelZoom = false, heat = false, selectedRoute, selectedAirport, showLabels = true, fixes, lines, live, onRoute, onAirport, onBackground, className, children }: WorldMapProps) {
   const wrap = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const zoomRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null);
@@ -87,9 +89,13 @@ export function WorldMap({ routes, airports, height = 420, center = 0, fit, inte
     if (fit && fit.length) {
       const pad = Math.min(size.w, size.h) * 0.18;
       const fc = { type: 'FeatureCollection', features: [{ type: 'Feature', properties: {}, geometry: fit.length > 1 ? { type: 'LineString', coordinates: fit } : { type: 'Point', coordinates: fit[0] } }] } as any;
-      p.fitExtent([[pad, pad], [size.w - pad, size.h - pad]], fc);
-      if (fit.length === 1 || p.scale() > size.w * 4) {
-        p.scale(Math.min(p.scale(), size.w * 2.2));
+      const lo = fit.map((q) => q[0]), la = fit.map((q) => q[1]);
+      const degenerate = fit.length === 1 || (Math.max(...lo) - Math.min(...lo) < 0.02 && Math.max(...la) - Math.min(...la) < 0.02);
+      if (degenerate) p.scale(size.w * (live ? 30 : 2.2)).translate([size.w / 2, size.h / 2]);
+      else p.fitExtent([[pad, pad], [size.w - pad, size.h - pad]], fc);
+      const zmax = live ? 30 : 2.2;
+      if (degenerate || !Number.isFinite(p.scale()) || p.scale() > size.w * zmax * 1.8) {
+        p.scale(Math.min(Number.isFinite(p.scale()) ? p.scale() : Infinity, size.w * zmax));
         const c = p(fit[0])!;
         const [tx, ty] = p.translate();
         p.translate([tx + size.w / 2 - c[0], ty + size.h / 2 - c[1]]);
@@ -98,7 +104,7 @@ export function WorldMap({ routes, airports, height = 420, center = 0, fit, inte
       p.fitExtent([[8, 8], [size.w - 8, size.h - 8]], { type: 'Sphere' } as any);
     }
     return p;
-  }, [size.w, size.h, center, JSON.stringify(fit)]);
+  }, [size.w, size.h, center, JSON.stringify(fit), !!live]);
 
   const path = useMemo(() => geoPath(projection), [projection]);
 
@@ -186,6 +192,10 @@ export function WorldMap({ routes, airports, height = 420, center = 0, fit, inte
               );
             })}
           </g>
+          {lines?.map((ln, i) => {
+            const d = ln.pts.length > 1 ? path({ type: 'LineString', coordinates: ln.pts } as any) : null;
+            return d ? <path key={'ln' + i} d={d} fill="none" stroke={ln.color} strokeWidth={ln.width ?? 2.2} strokeDasharray={ln.dash} strokeLinecap="round" vectorEffect="non-scaling-stroke" pointerEvents="none" /> : null;
+          })}
           {fixes && fixes.length > 0 && (
             <g pointerEvents="none">
               {fixes.map((x, i) => {
@@ -221,6 +231,19 @@ export function WorldMap({ routes, airports, height = 420, center = 0, fit, inte
               );
             })}
           </g>
+          {live && (() => {
+            const p = projection([live.lon, live.lat]);
+            if (!p) return null;
+            const k = 1 / Math.sqrt(t.k);
+            return (
+              <g transform={`translate(${p[0]},${p[1]})`} pointerEvents="none">
+                <circle r={16 * k} fill="#5ee0ef" opacity={0.18}><animate attributeName="r" values={`${10 * k};${22 * k};${10 * k}`} dur="2.4s" repeatCount="indefinite" /></circle>
+                <g transform={`rotate(${live.hdg}) scale(${1.1 * k}) translate(-12 -12)`}>
+                  <path fill="#ffffff" stroke="#050c1c" strokeWidth={1.2} d="M12 1.6c.7 0 1.2.9 1.2 2.2v5.3l8 4.6c.4.2.6.6.6 1v1.1c0 .3-.3.5-.6.4l-8-2.5v4.6l2.3 1.7c.2.2.3.4.3.6v.9c0 .3-.3.5-.6.4L12 21l-3.2.9c-.3.1-.6-.1-.6-.4v-.9c0-.2.1-.5.3-.6l2.3-1.7v-4.6l-8 2.5c-.3.1-.6-.1-.6-.4v-1.1c0-.4.2-.8.6-1l8-4.6V3.8c0-1.3.5-2.2 1.2-2.2Z" />
+                </g>
+              </g>
+            );
+          })()}
         </g>
       </svg>
       {interactive && (

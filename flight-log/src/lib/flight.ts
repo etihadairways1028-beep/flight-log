@@ -161,6 +161,8 @@ export function coerceFlight(raw: any): { flight?: Flight; error?: string } {
     purpose: str(raw.purpose), seat: str(raw.seat), role: raw.role ?? '', crew: str(raw.crew), weather: str(raw.weather),
     passengers: num(raw.passengers), fuel: num(raw.fuel), fuelUnit: ['kg', 'lb', 'l', 'gal'].includes(raw.fuelUnit) ? raw.fuelUnit : 'kg',
     takeoffsDay: num(raw.takeoffsDay), takeoffsNight: num(raw.takeoffsNight), landingsDay: num(raw.landingsDay), landingsNight: num(raw.landingsNight),
+    track: Array.isArray(raw.track) ? raw.track.filter((p: any) => p && Number.isFinite(p.lat) && Number.isFinite(p.lon)).slice(0, 3000) : undefined,
+    landingRateFpm: num(raw.landingRateFpm),
     flightPlan: raw.flightPlan && typeof raw.flightPlan === 'object' && Array.isArray(raw.flightPlan.fixes) ? raw.flightPlan : undefined,
     pilot: Object.fromEntries(PILOT_FIELDS.map((p) => [p.key, num(raw.pilot?.[p.key])])) as any,
     rating: num(raw.rating), tags: Array.isArray(raw.tags) ? raw.tags.map(str).filter(Boolean) : [],
@@ -188,4 +190,11 @@ export function plannedPath(f: Flight): [number, number][] | null {
   for (const x of fx) if (x.ident !== f.dep.ident && x.ident !== f.arr.ident) pts.push([x.lon, x.lat]);
   pts.push([f.arr.lon, f.arr.lat!]);
   return pts;
+}
+
+/** The best path to draw: the recorded track if there is one, else the filed plan. */
+export function bestPath(f: Flight): { pts: [number, number][]; kind: 'track' | 'plan' } | null {
+  if (f.track && f.track.length >= 2) return { pts: f.track.map((p) => [p.lon, p.lat] as [number, number]), kind: 'track' };
+  const p = plannedPath(f);
+  return p ? { pts: p, kind: 'plan' } : null;
 }

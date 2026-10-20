@@ -54,6 +54,25 @@ The sign-in screen now offers **email + password**, **magic link** and **forgot 
 
 ---
 
+## Connect MSFS 2020/2024 or X-Plane 11/12 (optional)
+
+Websites can't talk to simulators directly, so Flight Log ships a small bridge program (`public/bridge/`, also downloadable from **Sim Live** in the app).
+
+1. Install Python 3.9+ on the simulator PC.
+2. Download `flightlog_bridge.py`, `requirements.txt` and `start-bridge.bat` into one folder.
+3. **MSFS 2020 / 2024:** start the sim, load a flight, double-click `start-bridge.bat` (it installs `websockets` and `SimConnect`).
+   **X-Plane 11 / 12:** no plugin needed (built-in UDP data, port 49000). Run `python flightlog_bridge.py --sim xplane --xplane-dir "C:\X-Plane 12"`; `--xplane-dir` lets Flight Log save `.fms` plans into `Output/FMS plans`.
+4. Open Flight Log → **Sim Live** on the same computer (Chrome, Edge or Firefox) and press **Connect**.
+
+What it does:
+- Live altitude, speeds, heading, vertical speed and position on the map, with your filed SimBrief route overlaid.
+- Records off-block, takeoff, landing and on-block times, the flown track, distance, max altitude, touch-and-goes and the touchdown rate (fpm), then saves the flight, or completes a planned SimBrief flight.
+- **Send to MSFS / X-Plane**: pushes the SimBrief plan (runways, SID, STAR, every waypoint and airway) as `.pln` or `.fms`. MSFS gets it loaded via SimConnect when possible; otherwise it's saved to `Documents/Flight Log Plans` to load from the world map (Load/Save).
+
+Security: the bridge listens on `127.0.0.1` only and accepts connections only from `*.github.io` and localhost. For a custom domain add `--allow-origin https://your.domain`. `python flightlog_bridge.py --test` sends a looping demo circuit, labelled TEST DATA, to check the connection.
+
+About approaches: SimBrief's OFP lists the planned runways, SID and STAR, but not the ILS or approach procedure and frequencies. Pick the approach in the sim's FMC/EFB after loading the plan. Flight Log never guesses them.
+
 ## Run it locally
 
 ```bash
