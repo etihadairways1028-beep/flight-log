@@ -13,6 +13,12 @@ import { distanceBetween } from '../../lib/geo';
 import { useFmt } from '../../lib/useFmt';
 import { toFt, ftTo, toKt, ktTo, toKm, kmTo, ALT_LABEL, SPEED_LABEL, DIST_LABEL } from '../../lib/units';
 import { sound } from '../../lib/sound';
+import { QuickFill, type QuickApply } from './QuickFill';
+import { findAirport, toRef, code as apCode } from '../../lib/airports';
+import { airlineByIata, airlineByIcao, loadAirlines } from '../../lib/airlines';
+import { aircraftType } from '../../lib/aircraftTypes';
+import { groupBy } from '../../lib/stats';
+import { routeKey, isCounted } from '../../lib/flight';
 
 type TimeKey = keyof FlightTimes;
 const TIME_ROWS: { key: TimeKey; label: string; at: 'dep' | 'arr'; tip?: string }[] = [
@@ -94,6 +100,7 @@ export function FlightForm() {
   useEffect(() => {
     if (!form.open) return;
     sound.open();
+    loadAirlines();
     let base: Flight;
     if (form.flight) {
       base = structuredClone(form.flight);
@@ -145,6 +152,56 @@ export function FlightForm() {
       w[r.key] = { time, offset: dayOffset, auto: !fl.times[r.key] };
     }
     return w;
+  }
+
+  /** Load a quick-fill result into the form. Nothing is saved until the person presses Save. */
+  function applyQuick(a: QuickApply) {
+    let next: Flight;
+    if (a.flight) {
+      next = { ...a.flight, id: form.mode === 'edit' ? f.id : a.flight.id };
+    } else {
+      const r = a.result!;
+      next = { ...f, aircraft: { ...f.aircraft } };
+      if (r.date) next.date = r.date;
+      if (r.dep) next.dep = r.dep;
+      if (r.arr) next.arr = r.arr;
+      if (r.flightNumber) next.flightNumber = r.flightNumber;
+      if (r.airline) { next.airline = r.airline; next.airlineCode = r.airlineCode ?? ''; }
+      if (r.typeCode) { const t = aircraftType(r.typeCode); next.aircraft = { ...next.aircraft, typeCode: r.typeCode, manufacturer: t?.manufacturer ?? next.aircraft.manufacturer, model: t?.model ?? next.aircraft.model }; }
+      if (r.registration) next.aircraft.registration = r.registration;
+      if (r.seat) { next.seat = r.seat; if (!next.role) next.role = 'passenger'; }
+      if (r.cabin && !next.notes) next.notes = `${r.cabin} cabin`;
+      if (r.pnr && !next.tags.includes(`pnr-${r.pnr.toLowerCase()}`)) next.notes = [next.notes, `Booking ref ${r.pnr}`].filter(Boolean).join(' · ');
+      const depKey = a.timesAre === 'actual' ? 'offBlock' : 'schedOut';
+      const arrKey = a.timesAre === 'actual' ? 'onBlock' : 'schedIn';
+      const dz = next.dep?.tz || 'UTC', az = next.arr?.tz || 'UTC';
+      next.times = { ...next.times };
+      if (r.depTime) next.times[depKey] = wallToUtc(next.date, r.depTime, dz, 0);
+      if (r.arrTime) {
+        let off = r.arrDayOffset ?? 0;
+        let t = wallToUtc(next.date, r.arrTime, az, off);
+        if (r.arrDayOffset == null && t && next.times[depKey]) {
+          for (let o = 0; o <= 2 && t && Date.parse(t) < Date.parse(next.times[depKey]!); o++) { off = o + 1; t = wallToUtc(next.date, r.arrTime, az, off); }
+        }
+        next.times[arrKey] = t;
+      }
+    }
+    setF(next);
+    setWalls(wallsFrom(next, zoneMode));
+    setManualFlight(next.flightMinutesSource === 'manual' && next.flightMinutes != null ? fmtDuration(next.flightMinutes) : '');
+    setManualBlock(next.blockMinutesSource === 'manual' && next.blockMinutes != null ? fmtDuration(next.blockMinutes) : '');
+    setOpen((o) => ({ ...o, route: true, timing: true }));
+    setDirty(true);
+    toast({ kind: 'success', title: `${a.label} loaded`, body: 'Check the details, then save.' });
+  }
+
+  /** Fill the airline from the flight number's designator (EY 470 → Etihad Airways). */
+  function airlineFromFlightNumber(v: string) {
+    if (f.airline) return;
+    const m = v.trim().toUpperCase().match(/^([A-Z][A-Z0-9]|[A-Z0-9][A-Z])\s?\d{1,4}[A-Z]?$/) || v.trim().toUpperCase().match(/^([A-Z]{3})\s?\d{1,4}$/);
+    if (!m) return;
+    const al = m[1].length === 2 ? airlineByIata(m[1]) : airlineByIcao(m[1]);
+    if (al) upd({ airline: al.name, airlineCode: al.icao });
   }
 
   /** Instants from wall inputs, with automatic day roll-over for overnight sequences. */
@@ -210,6 +267,12 @@ export function FlightForm() {
     flights.forEach((x) => { if (x.aircraft.registration) m.set(x.aircraft.registration, x.aircraft); });
     return [...m.values()].slice(-40).reverse();
   }, [flights]);
+  const recentRoutes = useMemo(() => {
+    const seen = new Map<string, Flight>();
+    for (const x of [...flights].filter(isCounted).sort((a, b) => b.date.localeCompare(a.date))) { const k = routeKey(x, true); if (k && !seen.has(k)) seen.set(k, x); }
+    const freq = new Map(groupBy(flights, (x) => routeKey(x, true)).map((g) => [g.key, g.flights]));
+    return [...seen.entries()].sort((a, b) => (freq.get(b[0]) ?? 0) - (freq.get(a[0]) ?? 0)).slice(0, 6).map(([k, x]) => ({ k, dep: x.dep!, arr: x.arr! }));
+  }, [flights]);
   const knownAirlines = useMemo(() => [...new Set(flights.map((x) => x.airline).filter(Boolean))], [flights]);
   const knownTags = useMemo(() => [...new Set(flights.flatMap((x) => x.tags))].filter((t) => !f.tags.includes(t)).slice(0, 8), [flights, f.tags]);
 
@@ -269,6 +332,7 @@ export function FlightForm() {
       }
     >
       <form className="flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); save(); }}>
+        {form.mode !== 'edit' && <QuickFill key={String(form.open)} initial={form.quick ?? null} onApply={applyQuick} />}
         {/* Live summary strip */}
         <div className="glass relative overflow-hidden rounded-xl2 p-4">
           <div className="flex items-center gap-4">
@@ -311,7 +375,7 @@ export function FlightForm() {
                 ))}
               </div>
             </div>
-            <Field label="Flight number" htmlFor="ff-fn"><input id="ff-fn" className="input-mono" placeholder="EY 470" value={f.flightNumber} onChange={(e) => upd({ flightNumber: e.target.value.toUpperCase() })} /></Field>
+            <Field label="Flight number" htmlFor="ff-fn"><input id="ff-fn" className="input-mono" placeholder="EY 470" value={f.flightNumber} onChange={(e) => upd({ flightNumber: e.target.value.toUpperCase() })} onBlur={(e) => airlineFromFlightNumber(e.target.value)} /></Field>
             <Field label="Callsign" htmlFor="ff-cs"><input id="ff-cs" className="input-mono" placeholder="ETD470" value={f.callsign} onChange={(e) => upd({ callsign: e.target.value.toUpperCase() })} /></Field>
             <Field label={isSim ? 'Virtual airline / operator' : 'Airline / operator'} htmlFor="ff-al">
               <AirlineInput id="ff-al" value={f.airline} suggestions={knownAirlines} onChange={(v) => upd({ airline: v })} onPickAirline={(a) => upd({ airline: a.name, airlineCode: a.icao })} />
@@ -329,6 +393,14 @@ export function FlightForm() {
         </Section>
 
         <Section id="route" icon={RouteIcon} title="Route" hint={f.dep && f.arr ? `${f.dep.ident} → ${f.arr.ident}${draft.distanceKm ? ' · ' + fmt.dist(draft.distanceKm) + ' great-circle' : ''}` : 'Departure and arrival'} open={open.route} onToggle={() => setOpen({ ...open, route: !open.route })}>
+          {recentRoutes.length > 0 && (
+            <div className="mb-3 flex flex-wrap items-center gap-1.5">
+              <span className="mr-1 text-[12px] text-muted">Your routes</span>
+              {recentRoutes.map((r) => (
+                <button type="button" key={r.k} className={cx('chip h-7 font-mono', f.dep?.ident === r.dep.ident && f.arr?.ident === r.arr.ident && 'chip-on')} onClick={() => { sound.tap(); upd({ dep: r.dep, arr: r.arr }); }}>{apCode(r.dep)} → {apCode(r.arr)}</button>
+              ))}
+            </div>
+          )}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto_1fr] sm:items-end">
             <Field label="Departure" error={triedSave && !f.dep && f.status !== 'planned' && f.status !== 'draft' ? 'Required' : null}><AirportPicker label="Departure airport" value={f.dep} onChange={(a) => upd({ dep: a })} invalid={triedSave && !f.dep} /></Field>
             <button type="button" className="btn-icon btn-glass mx-auto mb-3 rotate-90 sm:rotate-0" aria-label="Swap departure and arrival" onClick={() => { sound.tap(); upd({ dep: f.arr, arr: f.dep }); }}><ArrowLeftRight className="h-4 w-4" /></button>

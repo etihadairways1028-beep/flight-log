@@ -41,3 +41,14 @@ export function airlineByIcao(code: string): Airline | undefined {
   const c = code.toUpperCase();
   return airlines.find((a) => a.icao === c);
 }
+
+export function airlineByIata(code: string): Airline | undefined {
+  const c = code.toUpperCase().trim();
+  if (c.length !== 2) return undefined;
+  return airlines.find((a) => a.iata === c);
+}
+
+/** Exposed for tests. */
+export function ingestAirlines(rows: [string, string, string, string, string][]) {
+  airlines = rows.map(([icao, iata, name, callsign, country]) => ({ icao, iata, name, callsign, country }));
+}

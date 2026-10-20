@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as RDialog from '@radix-ui/react-dialog';
 import { useNavigate } from 'react-router-dom';
-import { Search, Plane, TowerControl, NotebookTabs, CornerDownLeft, Plus } from 'lucide-react';
+import { Search, Plane, TowerControl, NotebookTabs, CornerDownLeft, Plus, Cloud, ScanLine, ClipboardPaste } from 'lucide-react';
 import { useStore } from '../../store/useStore';
 import { flightHaystack } from '../../lib/filters';
 import { searchAirports, code } from '../../lib/airports';
@@ -29,6 +29,9 @@ export function CommandSearch({ open, onOpenChange }: { open: boolean; onOpenCha
     const out: Item[] = [];
     if (!s) {
       out.push({ id: 'new', group: 'Actions', title: 'Log a new flight', icon: Plus, run: () => { onOpenChange(false); openForm(); }, mono: 'N' });
+      out.push({ id: 'sb', group: 'Actions', title: 'Import from SimBrief', icon: Cloud, run: () => { onOpenChange(false); openForm(null, 'create', 'simbrief'); } });
+      out.push({ id: 'scan', group: 'Actions', title: 'Scan a boarding pass', icon: ScanLine, run: () => { onOpenChange(false); openForm(null, 'create', 'scan'); } });
+      out.push({ id: 'paste', group: 'Actions', title: 'Paste booking details', icon: ClipboardPaste, run: () => { onOpenChange(false); openForm(null, 'create', 'paste'); } });
       NAV.forEach((n) => out.push({ id: n.to, group: 'Go to', title: n.label, icon: n.icon, run: go(n.to) }));
       sortByDateDesc(flights).slice(0, 4).forEach((f) => out.push({ id: f.id, group: 'Recent flights', title: `${code(f.dep)} → ${code(f.arr)}`, sub: `${fmt.date(f.date)} · ${f.flightNumber || f.callsign || aircraftLabel(f)}`, icon: NotebookTabs, run: go(`/flights/${f.id}`) }));
       return out;

@@ -53,3 +53,20 @@ export function hashStr(s: string): number {
 }
 
 export const AIRPORT_PHOTOS: Photo[] = [PHOTOS.gate, PHOTOS.gateWindow, PHOTOS.runwayDusk, PHOTOS.landingSunset, PHOTOS.duskCity, PHOTOS.tarmac];
+
+/** Wide, cinematic shots that work behind the dashboard greeting. */
+export const HERO_POOL: Photo[] = [
+  PHOTOS.wingClouds, PHOTOS.wingClouds2, PHOTOS.aboveClouds, PHOTOS.jetClouds, PHOTOS.overClouds, PHOTOS.goldenHour,
+  PHOTOS.sunsetTakeoff, PHOTOS.duskCity, PHOTOS.runwayDusk, PHOTOS.landingSunset, PHOTOS.cockpitNight, PHOTOS.gate,
+  PHOTOS.gateWindow, PHOTOS.tarmac, PHOTOS.inFlightBlue, PHOTOS.departing,
+];
+
+/** A different hero photo on every visit — never the same one twice in a row. */
+export function nextHeroPhoto(): Photo {
+  let last = -1;
+  try { last = Number(localStorage.getItem('skylog:hero') ?? -1); } catch { /* ignore */ }
+  let i = Math.floor(Math.random() * HERO_POOL.length);
+  if (i === last) i = (i + 1 + Math.floor(Math.random() * (HERO_POOL.length - 1))) % HERO_POOL.length;
+  try { localStorage.setItem('skylog:hero', String(i)); } catch { /* ignore */ }
+  return HERO_POOL[i];
+}

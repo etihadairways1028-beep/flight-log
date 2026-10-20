@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Pencil, Copy, Trash2, MapPin, Plane, Clock, Ruler, Mountain, Gauge, Users, CloudSun, Tag, NotebookPen, AlertTriangle, Fuel, Armchair, Info } from 'lucide-react';
+import { CheckCircle2, ArrowLeft, Pencil, Copy, Trash2, MapPin, Plane, Clock, Ruler, Mountain, Gauge, Users, CloudSun, Tag, NotebookPen, AlertTriangle, Fuel, Armchair, Info } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { useFmt } from '../lib/useFmt';
 import { aircraftLabel, missingFields, routeKey, isCounted } from '../lib/flight';
@@ -60,6 +60,12 @@ export default function FlightDetail() {
   const depDelay = minutesDelta(f.times.schedOut, f.times.offBlock);
   const arrDelay = minutesDelta(f.times.schedIn, f.times.onBlock);
 
+  /** Planned → completed: scheduled times become the recorded gate times, then the form opens to adjust. */
+  function markFlown() {
+    openForm({ ...f!, status: 'completed', times: { ...f!.times, offBlock: f!.times.offBlock ?? f!.times.schedOut, onBlock: f!.times.onBlock ?? f!.times.schedIn } }, 'edit');
+    toast({ kind: 'info', title: 'Marked as flown', body: 'Scheduled times were copied to off-block and on-block. Adjust them and add takeoff and landing if you know them, then save.' });
+  }
+
   async function remove() {
     const removed = await del([f!.id]);
     sound.warn();
@@ -82,6 +88,7 @@ export default function FlightDetail() {
       <div className="flex flex-wrap items-center gap-2">
         <button className="btn-ghost -ml-2" onClick={() => (history.length > 1 ? nav(-1) : nav('/flights'))}><ArrowLeft className="h-4 w-4" />Back</button>
         <div className="ml-auto flex gap-2">
+          {f.status === 'planned' && <button className="btn-primary" onClick={() => markFlown()}><CheckCircle2 className="h-4 w-4" />Mark as flown</button>}
           <button className="btn-glass" onClick={() => openForm(f, 'edit')}><Pencil className="h-4 w-4" />Edit</button>
           <button className="btn-glass" onClick={() => openForm(f, 'duplicate')}><Copy className="h-4 w-4" /><span className="hidden sm:inline">Duplicate</span></button>
           <button className="btn-glass hover:text-bad" onClick={() => setConfirm(true)} aria-label="Delete flight"><Trash2 className="h-4 w-4" /></button>

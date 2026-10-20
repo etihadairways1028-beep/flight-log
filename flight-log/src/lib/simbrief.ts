@@ -8,12 +8,12 @@ import { findAirport, toRef } from './airports';
 import { aircraftType } from './aircraftTypes';
 import { DateTime } from 'luxon';
 
-export async function fetchLatestOfp(username: string): Promise<Flight> {
+export async function fetchLatestOfp(username: string, opts: { asFlown?: boolean } = {}): Promise<Flight> {
   const u = username.trim();
   if (!u) throw new Error('Enter your SimBrief username first.');
   let res: Response;
   try {
-    res = await fetch(`https://www.simbrief.com/api/xml.fetcher.php?username=${encodeURIComponent(u)}&json=1`, { headers: { Accept: 'application/json' } });
+    res = await fetch(`https://www.simbrief.com/api/xml.fetcher.php?${/^\d+$/.test(u) ? 'userid' : 'username'}=${encodeURIComponent(u)}&json=1`, { headers: { Accept: 'application/json' } });
   } catch {
     throw new Error('Could not reach SimBrief from your browser (network or cross-origin block). Try again later, or import the OFP as CSV.');
   }
@@ -44,7 +44,18 @@ export async function fetchLatestOfp(username: string): Promise<Flight> {
   f.times.schedIn = ts(j.times?.sched_in);
   f.date = f.times.schedOut ? DateTime.fromISO(f.times.schedOut, { zone: 'utc' }).setZone(dep.tz).toISODate()! : f.date;
   f.passengers = Number(j.weights?.pax_count) || null;
-  f.notes = `Imported from SimBrief OFP${j.params?.request_id ? ` #${j.params.request_id}` : ''}. Add your actual times after the flight.`;
+  const ramp = Number(j.fuel?.plan_ramp);
+  if (Number.isFinite(ramp) && ramp > 0) { f.fuel = ramp; f.fuelUnit = /lb/i.test(String(j.params?.units ?? '')) ? 'lb' : 'kg'; }
+  if (j.alternate?.icao_code) f.configNotes = `Alternate ${j.alternate.icao_code}`;
+  if (opts.asFlown) {
+    // Log the plan as flown: planned off/on-block, takeoff and landing become the recorded times.
+    f.status = 'completed';
+    f.times.offBlock = f.times.schedOut;
+    f.times.takeoff = ts(j.times?.sched_off) ?? ts(j.times?.est_off);
+    f.times.landing = ts(j.times?.sched_on) ?? ts(j.times?.est_on);
+    f.times.onBlock = f.times.schedIn;
+  }
+  f.notes = `Imported from SimBrief OFP${j.params?.request_id ? ` #${j.params.request_id}` : ''}.${opts.asFlown ? ' Times are the planned times; adjust them if your flight differed.' : ' Add your actual times after the flight.'}`;
   f.simulator = '';
   f.role = 'sim-pilot';
   f.tags = ['simbrief'];

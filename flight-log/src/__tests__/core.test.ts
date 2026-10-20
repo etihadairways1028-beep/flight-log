@@ -222,3 +222,45 @@ describe('csv & json', () => {
     expect(coerceFlight({ date: 'nope' }).error).toBeTruthy();
   });
 });
+
+import { parseBcbp, parseFreeText, julianToDate } from '../lib/quickparse';
+import { ingestAirlines } from '../lib/airlines';
+import { DateTime as DT } from 'luxon';
+ingestAirlines(JSON.parse(readFileSync('public/data/airlines.json', 'utf8')));
+
+describe('quick entry', () => {
+  it('parses an IATA boarding pass', () => {
+    const bp = 'M1DOE/JANE            EABC123 AUHSINEY 0470 073Y032A0001 100';
+    const r = parseBcbp(bp)[0];
+    expect(r.dep?.ident).toBe('OMAA');
+    expect(r.arr?.ident).toBe('WSSS');
+    expect(r.flightNumber).toBe('EY 470');
+    expect(r.airline).toMatch(/Etihad/);
+    expect(r.seat).toBe('32A');
+    expect(DT.fromISO(r.date!).ordinal).toBe(73);
+  });
+  it('julian date picks a nearby year', () => {
+    const today = DT.fromISO('2026-01-05');
+    expect(julianToDate(360, today)).toBe('2025-12-26');
+    expect(julianToDate(10, today)).toBe('2026-01-10');
+  });
+  it('parses free text booking details', () => {
+    const r = parseFreeText('Your flight EY 470 from Abu Dhabi (AUH) to Singapore (SIN) on 14 Mar 2026, departs 22:10 arrives 08:55 +1. Boeing 787-9, seat 32A');
+    expect(r.dep?.iata).toBe('AUH');
+    expect(r.arr?.iata).toBe('SIN');
+    expect(r.flightNumber).toBe('EY 470');
+    expect(r.date).toBe('2026-03-14');
+    expect(r.depTime).toBe('22:10');
+    expect(r.arrTime).toBe('08:55');
+    expect(r.arrDayOffset).toBe(1);
+    expect(r.typeCode).toBe('B789');
+    expect(r.seat).toBe('32A');
+  });
+  it('parses compact notation', () => {
+    const r = parseFreeText('BA117 LHR-JFK 2026-04-01 10:30 13:20 B77W G-STBA');
+    expect(r.dep?.ident).toBe('EGLL');
+    expect(r.flightNumber).toBe('BA 117');
+    expect(r.typeCode).toBe('B77W');
+    expect(r.registration).toBe('G-STBA');
+  });
+});

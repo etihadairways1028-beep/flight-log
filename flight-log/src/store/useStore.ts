@@ -45,7 +45,7 @@ const emptyWorkspace = (): WorkspaceData => ({ flights: [], presets: [], notific
 
 export interface Toast { id: string; kind: 'success' | 'error' | 'info'; title: string; body?: string; action?: { label: string; run: () => void } }
 
-interface FormState { open: boolean; flight: Flight | null; mode: 'create' | 'edit' | 'duplicate' }
+interface FormState { open: boolean; flight: Flight | null; mode: 'create' | 'edit' | 'duplicate'; quick?: 'simbrief' | 'paste' | 'scan' | null }
 
 export interface AuthState { status: 'checking' | 'signedOut' | 'signedIn' | 'local'; user: { id: string; email: string } | null; recovery: boolean }
 export interface SyncState { state: 'idle' | 'syncing' | 'error'; lastSync: string | null; error: string | null }
@@ -86,7 +86,7 @@ interface State {
   wipeWorkspace(id: WorkspaceId): Promise<void>;
   toast(t: Omit<Toast, 'id'>): void;
   dismissToast(id: string): void;
-  openForm(flight?: Flight | null, mode?: FormState['mode']): void;
+  openForm(flight?: Flight | null, mode?: FormState['mode'], quick?: FormState['quick']): void;
   closeForm(): void;
   putPhoto(dataUrl: string, caption?: string): Promise<string>;
   getPhoto(id: string): Promise<PhotoRecord | undefined>;
@@ -347,8 +347,8 @@ export const useStore = create<State>((setState, get) => {
     dismissToast(id) {
       setState({ toasts: get().toasts.filter((t) => t.id !== id) });
     },
-    openForm(flight = null, mode = 'create') {
-      setState({ form: { open: true, flight, mode } });
+    openForm(flight = null, mode = 'create', quick = null) {
+      setState({ form: { open: true, flight, mode, quick } });
     },
     closeForm() {
       setState({ form: { ...get().form, open: false } });

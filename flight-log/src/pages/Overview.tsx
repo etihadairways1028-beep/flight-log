@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { DateTime } from 'luxon';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, AreaChart, Area } from 'recharts';
-import { Plus, Upload, ArrowUpRight, TrendingUp, TrendingDown, Lightbulb, Plane, Clock, Route, MapPin, Building2, CalendarRange, Timer, Trophy, Ruler, Gauge, Layers, Globe2, ChevronRight } from 'lucide-react';
+import { Shuffle, Plus, Upload, ArrowUpRight, TrendingUp, TrendingDown, Lightbulb, Plane, Clock, Route, MapPin, Building2, CalendarRange, Timer, Trophy, Ruler, Gauge, Layers, Globe2, ChevronRight } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { useFmt } from '../lib/useFmt';
 import { summarize, monthly, groupBy, airportVisits, domesticSplit, sortByDateDesc } from '../lib/stats';
@@ -13,7 +13,7 @@ import { AnimatedNumber, CategoryBadge, Glass, Partial, Photo, Segmented, Status
 import { ChartCard, ChartTooltip, RankBars, AXIS, Legend } from '../components/charts/ChartKit';
 import { FlightCard, RouteBar } from '../components/flight/FlightBits';
 import { WorldMap, buildMapData } from '../components/map/WorldMap';
-import { PHOTOS, photoForBody, hashStr } from '../lib/images';
+import { PHOTOS, photoForBody, hashStr, nextHeroPhoto } from '../lib/images';
 import { aircraftType } from '../lib/aircraftTypes';
 import { code } from '../lib/airports';
 import { monthLabel } from '../lib/time';
@@ -54,7 +54,7 @@ export default function Overview() {
   const hasSim = sum.simFlights > 0;
 
   const greeting = now.hour < 5 ? 'Good evening' : now.hour < 12 ? 'Good morning' : now.hour < 18 ? 'Good afternoon' : 'Good evening';
-  const heroPhoto = latest ? photoForBody(aircraftType(latest.aircraft.typeCode)?.body, hashStr(latest.id)) : PHOTOS.wingClouds;
+  const [heroPhoto, setHeroPhoto] = useState(nextHeroPhoto);
 
   const cards: Record<string, { label: string; icon: any; value: number; format?: (n: number) => string; sub?: React.ReactNode; to: string; partial?: [number, number]; tip?: string }> = {
     flights: { label: 'Total flights', icon: Plane, value: sum.flights, to: '/flights', sub: hasSim ? `${sum.realFlights} real · ${sum.simFlights} sim` : sum.excluded ? `${sum.excluded} planned/cancelled not counted` : undefined },
@@ -77,7 +77,8 @@ export default function Overview() {
     <div className="flex flex-col gap-6">
       {/* Hero */}
       <section className="grid gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
-        <Photo photo={heroPhoto} priority className="min-h-[280px] rounded-xl3 shadow-glass md:min-h-[320px]" sizes="(max-width: 1024px) 100vw, 60vw">
+        <Photo key={heroPhoto.id} photo={heroPhoto} priority className="group/hero min-h-[280px] rounded-xl3 shadow-glass md:min-h-[320px]" sizes="(max-width: 1024px) 100vw, 60vw">
+          <button onClick={() => setHeroPhoto(nextHeroPhoto())} className="btn-icon absolute right-4 top-4 z-10 h-9 w-9 rounded-xl bg-black/30 text-white/80 opacity-70 backdrop-blur-md transition hover:opacity-100 hover:text-white" aria-label="Show another photo" title="Show another photo"><Shuffle className="h-4 w-4" /></button>
           <div className="flex h-full flex-col justify-between p-6 md:p-8">
             <div className="flex items-center gap-2 text-[12px] text-fg/80">
               <span className="num">{now.toFormat('cccc, d LLLL yyyy')}</span>
@@ -122,6 +123,8 @@ export default function Overview() {
           </Link>
         </div>
       </section>
+
+      <QuickLogBar latest={latest} />
 
       {/* Key statistics */}
       <section aria-label="Key statistics" className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
@@ -296,9 +299,10 @@ function GettingStarted() {
   const s = useStore((x) => x.settings);
   const now = DateTime.local();
   const sample = useSampleFlight();
+  const [hero] = useState(nextHeroPhoto);
   return (
     <div className="flex flex-col gap-6">
-      <Photo photo={PHOTOS.goldenHour} priority className="min-h-[340px] rounded-xl3 shadow-glass">
+      <Photo photo={hero} priority className="min-h-[340px] rounded-xl3 shadow-glass">
         <div className="flex h-full min-h-[340px] flex-col justify-end p-6 md:p-10">
           <div className="label mb-3 text-ice">{now.toFormat('cccc, d LLLL')}</div>
           <h1 className="max-w-2xl text-[36px] font-semibold leading-[1.04] tracking-[-0.03em] md:text-[52px] text-balance">Welcome aboard{s.displayName ? `, ${s.displayName.split(' ')[0]}` : ''}. Every flight tells a story.</h1>
@@ -309,6 +313,7 @@ function GettingStarted() {
           </div>
         </div>
       </Photo>
+      <QuickLogBar latest={undefined} />
       <div className="grid gap-4 md:grid-cols-3">
         <button onClick={() => openForm(sample, 'create')} className="glass glass-hover rounded-xl2 p-5 text-left">
           <div className="mb-3 grid h-10 w-10 place-items-center rounded-xl bg-accent/15 text-ice ring-1 ring-accent/30"><Plane className="h-5 w-5" /></div>
@@ -353,4 +358,32 @@ function useSampleFlight() {
     f.tags = ['sample'];
     return finalizeFlight(f);
   }, [s]);
+}
+
+import { Cloud as CloudIcon, ScanLine, ClipboardPaste, Undo2, PenLine } from 'lucide-react';
+import { returnOf } from '../components/flight/QuickFill';
+import type { Flight } from '../lib/types';
+
+/** One-tap ways to start logging. */
+function QuickLogBar({ latest }: { latest: Flight | undefined }) {
+  const openForm = useStore((s) => s.openForm);
+  const items: { icon: any; title: string; sub: string; run: () => void; primary?: boolean }[] = [
+    { icon: PenLine, title: 'Log manually', sub: 'Shortcut: N', run: () => openForm(), primary: true },
+    { icon: CloudIcon, title: 'From SimBrief', sub: 'Latest flight plan', run: () => openForm(null, 'create', 'simbrief') },
+    { icon: ScanLine, title: 'Scan boarding pass', sub: 'Camera or photo', run: () => openForm(null, 'create', 'scan') },
+    { icon: ClipboardPaste, title: 'Paste details', sub: 'Booking or e-ticket', run: () => openForm(null, 'create', 'paste') },
+    ...(latest ? [{ icon: Undo2, title: 'Return flight', sub: `${code(latest.arr)} → ${code(latest.dep)}`, run: () => openForm(returnOf(latest), 'create') }] : []),
+  ];
+  return (
+    <section aria-label="Quick log" className="glass rounded-xl2 p-3">
+      <div className="flex gap-2 overflow-x-auto">
+        {items.map((it) => (
+          <button key={it.title} onClick={it.run} className={cx('flex min-w-[168px] flex-1 items-center gap-3 rounded-xl px-3.5 py-3 text-left transition ring-1', it.primary ? 'bg-accent/20 ring-accent/40 hover:bg-accent/30' : 'bg-white/[0.035] ring-white/[0.07] hover:bg-white/[0.07]')}>
+            <span className={cx('grid h-9 w-9 shrink-0 place-items-center rounded-lg', it.primary ? 'bg-accent text-white' : 'bg-white/[0.06] text-ice')}><it.icon className="h-4 w-4" /></span>
+            <span className="min-w-0"><span className="block truncate text-[13px] font-medium">{it.title}</span><span className="block truncate text-[11.5px] text-faint">{it.sub}</span></span>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
 }

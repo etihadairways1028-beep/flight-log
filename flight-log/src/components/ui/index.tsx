@@ -64,7 +64,7 @@ export function Photo({ photo, src, alt, className, imgClassName, sizes = '(max-
   }, [photo?.id, src]);
   const url = src ?? (photo && showPhotos ? photoUrl(photo, 1200) : undefined);
   return (
-    <div className={cx('relative overflow-hidden bg-deep', className)}>
+    <div className={cx('relative overflow-hidden bg-deep', className)} data-photo={photo?.id}>
       {/* fallback art: dusk gradient + horizon + glyph — always present underneath */}
       <div className="absolute inset-0" aria-hidden="true" style={{ background: 'radial-gradient(120% 80% at 70% 0%, rgb(59 130 246 / .35), transparent 60%), linear-gradient(180deg, rgb(20 36 72), rgb(8 14 30))' }}>
         <div className="absolute inset-x-0 bottom-[34%] h-px bg-gradient-to-r from-transparent via-ice/30 to-transparent" />
@@ -232,7 +232,7 @@ export function Toggle({ checked, onChange, label, id }: { checked: boolean; onC
       onClick={() => onChange(!checked)}
       className={cx('relative h-6 w-11 shrink-0 rounded-full transition-colors ring-1', checked ? 'bg-accent ring-accent/60' : 'bg-white/10 ring-white/10')}
     >
-      <span className={cx('absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform', checked ? 'translate-x-[22px]' : 'translate-x-0.5')} />
+      <span className={cx('absolute left-0 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform', checked ? 'translate-x-[22px]' : 'translate-x-0.5')} />
     </button>
   );
 }
