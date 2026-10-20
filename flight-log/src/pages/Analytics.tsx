@@ -19,10 +19,10 @@ import { FlightCard } from '../components/flight/FlightBits';
 import { monthLabel, calendarDate } from '../lib/time';
 import { code } from '../lib/airports';
 
-type Tab = 'time' | 'aircraft' | 'routes' | 'activity' | 'compare' | 'insights';
+type Tab = 'time' | 'aircraft' | 'routes' | 'pilot' | 'activity' | 'compare' | 'insights';
 const TABS: { value: Tab; label: string }[] = [
   { value: 'time', label: 'Time' }, { value: 'aircraft', label: 'Aircraft' }, { value: 'routes', label: 'Routes' },
-  { value: 'activity', label: 'Activity' }, { value: 'compare', label: 'Compare' }, { value: 'insights', label: 'Insights' },
+  { value: 'pilot', label: 'Pilot' }, { value: 'activity', label: 'Activity' }, { value: 'compare', label: 'Compare' }, { value: 'insights', label: 'Insights' },
 ];
 
 export default function Analytics() {
@@ -53,6 +53,7 @@ export default function Analytics() {
           {tab === 'time' && <TimeTab flights={flights} />}
           {tab === 'aircraft' && <AircraftTab flights={flights} />}
           {tab === 'routes' && <RoutesTab flights={flights} />}
+          {tab === 'pilot' && <PilotTab flights={flights} />}
           {tab === 'activity' && <ActivityTab flights={flights} />}
           {tab === 'compare' && <CompareTab flights={flights} />}
           {tab === 'insights' && <InsightsTab flights={flights} />}
@@ -134,6 +135,14 @@ function TimeTab({ flights }: { flights: Flight[] }) {
     return bins.map(([a, b, l]) => ({ label: l, n: flights.filter((f) => f.flightMinutes != null && f.flightMinutes >= a && f.flightMinutes < b).length }));
   }, [flights]);
   const byType = useMemo(() => groupBy(flights, typeKey, aircraftLabel).filter((g) => g.key !== 'UNKNOWN').sort((a, b) => b.minutes - a.minutes).slice(0, 8), [flights]);
+  const weekly = useMemo(() => {
+    const start = DateTime.local().startOf('week').minus({ weeks: 25 });
+    return Array.from({ length: 26 }, (_, i) => {
+      const w0 = start.plus({ weeks: i }), w1 = w0.plus({ days: 6 });
+      const a = w0.toISODate()!, b = w1.toISODate()!;
+      return { label: w0.toFormat('d LLL'), flights: flights.filter((f) => f.date >= a && f.date <= b).length };
+    });
+  }, [flights]);
   const byAirline = useMemo(() => groupBy(flights, (f) => f.airline || null).sort((a, b) => b.minutes - a.minutes).slice(0, 8), [flights]);
   const byRoute = useMemo(() => groupBy(flights, (f) => routeKey(f)).sort((a, b) => b.minutes - a.minutes).slice(0, 8), [flights]);
   const hasSim = s.simMinutes > 0, hasReal = s.realMinutes > 0;
@@ -191,6 +200,17 @@ function TimeTab({ flights }: { flights: Flight[] }) {
               <Tooltip content={<ChartTooltip labelFormat={(m: string) => monthLabel(m, true)} format={(v: number) => `${v} h`} />} />
               <Area type="monotone" dataKey="cumH" name="Total" stroke="#a9d4ff" strokeWidth={2} fill="url(#cum2)" />
             </AreaChart>
+          </ResponsiveContainer></div>
+        </ChartCard>
+        <ChartCard className="lg:col-span-3" eyebrow="Weekly" title="Flights per week (last 26 weeks)" footer="Weeks start on Monday.">
+          <div className="h-[180px]"><ResponsiveContainer>
+            <BarChart data={weekly} margin={{ top: 4, right: 4, left: -10, bottom: 0 }}>
+              <CartesianGrid vertical={false} />
+              <XAxis dataKey="label" {...AXIS} minTickGap={24} />
+              <YAxis {...AXIS} allowDecimals={false} width={40} />
+              <Tooltip cursor={{ fill: 'rgb(255 255 255 / .04)' }} content={<ChartTooltip labelFormat={(l: string) => `Week of ${l}`} />} />
+              <Bar dataKey="flights" name="Flights" fill="#5b9bff" radius={[4, 4, 1, 1]} />
+            </BarChart>
           </ResponsiveContainer></div>
         </ChartCard>
         <ChartCard eyebrow="Distribution" title="Flight durations" footer="Flights with a recorded flight time.">
@@ -420,6 +440,46 @@ function InsightsTab({ flights }: { flights: Flight[] }) {
           {i.href && <Link to={i.href} className="link mt-2 inline-block text-[12.5px]">See the data</Link>}
         </Glass>
       ))}
+    </div>
+  );
+}
+
+import { pilotWindows } from '../lib/pilot';
+import { RecencyCards } from '../components/charts/Recency';
+import { PILOT_FIELDS } from '../lib/types';
+
+function PilotTab({ flights }: { flights: Flight[] }) {
+  const fmt = useFmt();
+  const [sim, setSim] = useState(false);
+  const wins = useMemo(() => pilotWindows(flights, sim), [flights, sim]);
+  const has = wins[wins.length - 1].totals.flights > 0;
+  const cols: { key: string; label: string; get: (t: any) => string }[] = [
+    { key: 'flights', label: 'Flights', get: (t) => String(t.flights) },
+    { key: 'total', label: 'Total', get: (t) => fmt.dur(t.total) },
+    { key: 'block', label: 'Block', get: (t) => fmt.dur(t.block) },
+    ...PILOT_FIELDS.map((p) => ({ key: p.key, label: p.label, get: (t: any) => (!t[p.key] ? '—' : p.kind === 'time' ? fmt.dur(t[p.key]) : String(t[p.key])) })),
+    { key: 'ldg', label: 'LDG (night)', get: (t) => `${t.landings} (${t.nightLandings})` },
+  ];
+  return (
+    <div className="flex flex-col gap-4">
+      {!sim && <RecencyCards flights={flights} />}
+      <Glass className="overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[0.06] p-4">
+          <h3 className="text-[14px] font-semibold">Pilot totals</h3>
+          <Segmented label="Pilot totals source" size="sm" value={sim ? 'sim' : 'real'} onChange={(v) => setSim(v === 'sim')} options={[{ value: 'real', label: 'Real-world' }, { value: 'sim', label: 'Simulator' }]} />
+        </div>
+        {!has ? <p className="p-6 text-center text-[13px] text-muted">No {sim ? 'simulator' : 'real-world'} flights in view. Pilot times appear once you fill the “Pilot log” section of a flight.</p> : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-[12.5px]">
+              <thead><tr className="text-left text-[10.5px] uppercase tracking-wider text-faint"><th className="px-4 py-3 font-medium">Period</th>{cols.map((c) => <th key={c.key} className="px-3 py-3 text-right font-medium whitespace-nowrap">{c.label}</th>)}</tr></thead>
+              <tbody className="divide-y divide-white/[0.05]">
+                {wins.map((w) => <tr key={w.key}><td className="px-4 py-2.5 whitespace-nowrap text-muted">{w.label}</td>{cols.map((c) => <td key={c.key} className="mono px-3 py-2.5 text-right">{c.get(w.totals)}</td>)}</tr>)}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Glass>
+      <p className="text-[11.5px] text-faint">Recency follows the common “3 takeoffs and landings in 90 days” pattern and only counts real-world flights with takeoffs and landings recorded. It’s an indicator, not legal advice: requirements vary by authority, aircraft class and rating. Flight Log isn't an approved regulatory logbook.</p>
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import type { AirportRef, Flight, FlightCategory, FlightStatus, Settings } from './types';
+import { emptyPilot, PILOT_FIELDS } from './types';
 import { deriveDurations, isValidISODate, todayISO } from './time';
 import { distanceBetween } from './geo';
 import { aircraftType } from './aircraftTypes';
@@ -52,6 +53,7 @@ export function emptyFlight(s?: Partial<Settings>): Flight {
     photos: [],
     notes: '',
     simulator: s?.defaultCategory === 'simulator' ? s?.defaultSimulator ?? '' : '',
+    pilot: emptyPilot(),
     source: 'manual',
     createdAt: now,
     updatedAt: now,
@@ -159,6 +161,8 @@ export function coerceFlight(raw: any): { flight?: Flight; error?: string } {
     purpose: str(raw.purpose), seat: str(raw.seat), role: raw.role ?? '', crew: str(raw.crew), weather: str(raw.weather),
     passengers: num(raw.passengers), fuel: num(raw.fuel), fuelUnit: ['kg', 'lb', 'l', 'gal'].includes(raw.fuelUnit) ? raw.fuelUnit : 'kg',
     takeoffsDay: num(raw.takeoffsDay), takeoffsNight: num(raw.takeoffsNight), landingsDay: num(raw.landingsDay), landingsNight: num(raw.landingsNight),
+    flightPlan: raw.flightPlan && typeof raw.flightPlan === 'object' && Array.isArray(raw.flightPlan.fixes) ? raw.flightPlan : undefined,
+    pilot: Object.fromEntries(PILOT_FIELDS.map((p) => [p.key, num(raw.pilot?.[p.key])])) as any,
     rating: num(raw.rating), tags: Array.isArray(raw.tags) ? raw.tags.map(str).filter(Boolean) : [],
     photos: Array.isArray(raw.photos) ? raw.photos.map(str) : [], notes: str(raw.notes), simulator: str(raw.simulator),
     source: raw.source ?? 'json', createdAt: str(raw.createdAt) || base.createdAt, updatedAt: str(raw.updatedAt) || base.updatedAt,
@@ -171,4 +175,17 @@ export function coerceFlight(raw: any): { flight?: Flight; error?: string } {
 /** Duplicate signature: same date, route and flight number/callsign. */
 export function dupKey(f: Pick<Flight, 'date' | 'dep' | 'arr' | 'flightNumber' | 'callsign'>): string {
   return [f.date, f.dep?.ident ?? '', f.arr?.ident ?? '', (f.flightNumber || f.callsign || '').replace(/\s+/g, '').toUpperCase()].join('|');
+}
+
+/** Does this flight carry any pilot-log data? */
+export const hasPilotData = (f: Flight) => !!f.pilot && Object.values(f.pilot).some((v) => v != null && v !== 0);
+
+/** Coordinates of the filed route (departure → fixes → arrival), when a flight plan exists. */
+export function plannedPath(f: Flight): [number, number][] | null {
+  const fx = f.flightPlan?.fixes;
+  if (!fx || fx.length < 2 || f.dep?.lon == null || f.arr?.lon == null) return null;
+  const pts: [number, number][] = [[f.dep.lon, f.dep.lat!]];
+  for (const x of fx) if (x.ident !== f.dep.ident && x.ident !== f.arr.ident) pts.push([x.lon, x.lat]);
+  pts.push([f.arr.lon, f.arr.lat!]);
+  return pts;
 }

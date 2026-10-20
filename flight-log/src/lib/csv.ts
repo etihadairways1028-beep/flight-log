@@ -33,6 +33,21 @@ export const CSV_FIELDS = [
   { key: 'tags', label: 'Tags', help: 'Separated by ; or |' },
   { key: 'rating', label: 'Rating', help: '1–5' },
   { key: 'notes', label: 'Notes', help: 'Free text' },
+  { key: 'takeoffs_day', label: 'Day takeoffs', help: 'Number' },
+  { key: 'takeoffs_night', label: 'Night takeoffs', help: 'Number' },
+  { key: 'landings_day', label: 'Day landings', help: 'Number' },
+  { key: 'landings_night', label: 'Night landings', help: 'Number' },
+  { key: 'pic', label: 'PIC time', help: 'H:MM or decimal hours' },
+  { key: 'sic', label: 'SIC time', help: 'H:MM or decimal hours' },
+  { key: 'dual', label: 'Dual received', help: 'H:MM or decimal hours' },
+  { key: 'instructor', label: 'Instructor time', help: 'H:MM or decimal hours' },
+  { key: 'solo', label: 'Solo time', help: 'H:MM or decimal hours' },
+  { key: 'night', label: 'Night time', help: 'H:MM or decimal hours' },
+  { key: 'ifr_actual', label: 'Actual instrument', help: 'H:MM or decimal hours' },
+  { key: 'ifr_sim', label: 'Simulated instrument', help: 'H:MM or decimal hours' },
+  { key: 'xc', label: 'Cross-country', help: 'H:MM or decimal hours' },
+  { key: 'approaches', label: 'Approaches', help: 'Number' },
+  { key: 'holds', label: 'Holds', help: 'Number' },
 ] as const;
 export type CsvKey = (typeof CSV_FIELDS)[number]['key'];
 
@@ -62,6 +77,21 @@ const ALIASES: Record<CsvKey, string[]> = {
   tags: ['tags', 'labels'],
   rating: ['rating', 'stars'],
   notes: ['notes', 'remarks', 'comments', 'memo'],
+  takeoffs_day: ['day takeoffs', 'to day', 'day to', 'takeoffs day'],
+  takeoffs_night: ['night takeoffs', 'to night', 'night to', 'takeoffs night'],
+  landings_day: ['day landings', 'ldg day', 'day ldg', 'landings day', 'landings'],
+  landings_night: ['night landings', 'ldg night', 'night ldg', 'landings night'],
+  pic: ['pic', 'pic time', 'p1', 'pilot in command'],
+  sic: ['sic', 'sic time', 'p2', 'co-pilot', 'copilot'],
+  dual: ['dual', 'dual received', 'p u/t', 'pu/t'],
+  instructor: ['instructor', 'dual given', 'fi', 'cfi'],
+  solo: ['solo'],
+  night: ['night', 'night time'],
+  ifr_actual: ['ifr', 'actual instrument', 'imc', 'ifr actual'],
+  ifr_sim: ['simulated instrument', 'hood', 'ifr sim', 'sim instrument'],
+  xc: ['xc', 'cross country', 'cross-country'],
+  approaches: ['approaches', 'apps', 'app'],
+  holds: ['holds', 'holding'],
 };
 // export header for each key is the key itself
 const norm = (s: string) => s.toLowerCase().replace(/[_\-]+/g, ' ').replace(/\s+/g, ' ').trim();
@@ -173,6 +203,10 @@ export function rowsToFlights(rows: Record<string, string>[], map: Record<CsvKey
     const rating = Number(get('rating'));
     f.rating = rating >= 1 && rating <= 5 ? Math.round(rating) : null;
     f.notes = get('notes');
+    const n = (k: CsvKey) => { const v = get(k); return v !== '' && /^\d+$/.test(v) ? Number(v) : null; };
+    f.takeoffsDay = n('takeoffs_day'); f.takeoffsNight = n('takeoffs_night'); f.landingsDay = n('landings_day'); f.landingsNight = n('landings_night');
+    const pt = (k: CsvKey) => (get(k) ? parseDurationInput(get(k)) : null);
+    f.pilot = { pic: pt('pic'), sic: pt('sic'), dual: pt('dual'), instructor: pt('instructor'), solo: pt('solo'), night: pt('night'), ifrActual: pt('ifr_actual'), ifrSim: pt('ifr_sim'), xc: pt('xc'), approaches: n('approaches'), holds: n('holds') };
     const fin = finalizeFlight(f);
     const k = dupKey(fin);
     const duplicate = seen.has(k);
@@ -182,6 +216,8 @@ export function rowsToFlights(rows: Record<string, string>[], map: Record<CsvKey
 }
 
 const iso = (s: string | null) => (s ? s.replace('.000Z', 'Z') : '');
+
+const d = (m: number | null | undefined) => (m != null ? fmtDuration(m) : '');
 
 export function flightsToCsv(flights: Flight[]): string {
   const rows = flights.map((f) => ({
@@ -210,6 +246,9 @@ export function flightsToCsv(flights: Flight[]): string {
     tags: f.tags.join(';'),
     rating: f.rating ?? '',
     notes: f.notes,
+    takeoffs_day: f.takeoffsDay ?? '', takeoffs_night: f.takeoffsNight ?? '', landings_day: f.landingsDay ?? '', landings_night: f.landingsNight ?? '',
+    pic: d(f.pilot?.pic), sic: d(f.pilot?.sic), dual: d(f.pilot?.dual), instructor: d(f.pilot?.instructor), solo: d(f.pilot?.solo), night: d(f.pilot?.night),
+    ifr_actual: d(f.pilot?.ifrActual), ifr_sim: d(f.pilot?.ifrSim), xc: d(f.pilot?.xc), approaches: f.pilot?.approaches ?? '', holds: f.pilot?.holds ?? '',
     distance_km: f.distanceKm != null ? Math.round(f.distanceKm) : '',
   }));
   return Papa.unparse(rows, { columns: [...CSV_FIELDS.map((c) => c.key), 'distance_km'] });
@@ -219,7 +258,7 @@ export function csvTemplate(): string {
   return Papa.unparse({
     fields: CSV_FIELDS.map((c) => c.key),
     data: [[
-      '2026-03-14', 'OMAA', 'WSSS', 'EY 470', 'ETD470', 'real', 'completed', 'Etihad Airways', 'B789', '', '', '', '02:05', '09:21', '', '', '', '', '', 'passenger', '32A', '', 'holiday', '5', 'Window seat, clear skies over the Bay of Bengal',
+      '2026-03-14', 'OMAA', 'WSSS', 'EY 470', 'ETD470', 'real', 'completed', 'Etihad Airways', 'B789', '', '', '', '02:05', '09:21', '', '', '', '', '', 'passenger', '32A', '', 'holiday', '5', 'Window seat, clear skies over the Bay of Bengal', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '',
     ]],
   });
 }

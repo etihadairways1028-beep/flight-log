@@ -14,12 +14,14 @@ import { CATEGORY_LABEL, type Flight } from '../lib/types';
 import { ConfirmDialog, Glass, PageHeader, Segmented, cx } from '../components/ui';
 import { monthLabel } from '../lib/time';
 import { sound } from '../lib/sound';
+import { pilotTotals } from '../lib/pilot';
+import { PILOT_FIELDS } from '../lib/types';
 import { loadExtendedAirports } from '../lib/airports';
 
-type ReportKind = 'monthly' | 'annual' | 'aircraft' | 'routes' | 'airports' | 'hours' | 'custom';
+type ReportKind = 'monthly' | 'annual' | 'aircraft' | 'routes' | 'airports' | 'hours' | 'pilot' | 'custom';
 const KINDS: { value: ReportKind; label: string }[] = [
   { value: 'monthly', label: 'Monthly summary' }, { value: 'annual', label: 'Annual report' }, { value: 'aircraft', label: 'Aircraft usage' },
-  { value: 'routes', label: 'Routes' }, { value: 'airports', label: 'Airport visits' }, { value: 'hours', label: 'Flight hours' }, { value: 'custom', label: 'Custom range' },
+  { value: 'routes', label: 'Routes' }, { value: 'airports', label: 'Airport visits' }, { value: 'hours', label: 'Flight hours' }, { value: 'pilot', label: 'Pilot logbook' }, { value: 'custom', label: 'Custom range' },
 ];
 
 export default function Reports() {
@@ -114,6 +116,12 @@ function ReportBuilder() {
             {kind === 'aircraft' && regs.length > 0 && <div><h4 className="mb-2 text-[14px] font-semibold">Registrations</h4><Table head={['Registration', 'Flights', 'Flight time', 'First', 'Last']} rows={regs.map((r) => [r.key, r.flights, fmt.dur(r.minutes), fmt.date(r.first), fmt.date(r.last)])} /></div>}
             {(kind === 'routes' || kind === 'annual') && <div><h4 className="mb-2 text-[14px] font-semibold">Routes</h4><Table head={['Route', 'Flights', 'Flight time', 'Distance each']} rows={routes.slice(0, kind === 'annual' ? 15 : 200).map((r) => [r.key, r.flights, fmt.dur(r.minutes), fmt.dist(r.distanceKm / r.flights)])} /></div>}
             {kind === 'airports' && <div><h4 className="mb-2 text-[14px] font-semibold">Airport visits</h4><Table head={['Airport', 'Departures', 'Arrivals', 'Total', 'Last visit']} rows={visits.map((v) => [`${v.label} · ${v.name}`, v.departures, v.arrivals, v.total, fmt.date(v.last)])} /></div>}
+            {kind === 'pilot' && (() => { const real = fs.filter((f) => f.category !== 'simulator'), sim = fs.filter((f) => f.category === 'simulator'); const rows = [['Real-world', pilotTotals(real)], ['Simulator', pilotTotals(sim)]] as const; return (
+              <>
+                <div><h4 className="mb-2 text-[14px] font-semibold">Totals</h4><Table head={['', 'Flights', 'Total', 'Block', ...PILOT_FIELDS.map((p) => p.label), 'T/O', 'LDG', 'Night LDG']} rows={rows.filter(([, t]) => t.flights).map(([l, t]) => [l, t.flights, fmt.dur(t.total), fmt.dur(t.block), ...PILOT_FIELDS.map((p) => (p.kind === 'time' ? fmt.dur(t[p.key]) : t[p.key])), t.takeoffs, t.landings, t.nightLandings])} /></div>
+                <div><h4 className="mb-2 text-[14px] font-semibold">Flights</h4><Table head={['Date', 'Aircraft', 'Reg', 'Route', 'Total', 'PIC', 'SIC', 'Dual', 'Night', 'IFR', 'LDG D/N', 'Remarks']} rows={list.map((f) => [fmt.date(f.date), f.aircraft.typeCode || '—', fmt.reg(f), `${code(f.dep)}–${code(f.arr)}`, fmt.dur(f.flightMinutes), fmt.dur(f.pilot?.pic), fmt.dur(f.pilot?.sic), fmt.dur(f.pilot?.dual), fmt.dur(f.pilot?.night), fmt.dur((f.pilot?.ifrActual ?? 0) + (f.pilot?.ifrSim ?? 0) || null), `${f.landingsDay ?? 0}/${f.landingsNight ?? 0}`, f.category === 'simulator' ? `SIM ${f.simulator}`.trim() : f.purpose || ''])} /></div>
+              </>
+            ); })()}
             {(kind === 'monthly' || kind === 'custom') && <div><h4 className="mb-2 text-[14px] font-semibold">Flights</h4><Table head={['Date', 'Flight', 'Route', 'Aircraft', 'Reg', 'Flight', 'Block']} rows={list.map((f) => [fmt.date(f.date), f.flightNumber || f.callsign || '—', `${code(f.dep)}–${code(f.arr)}`, f.aircraft.typeCode || '—', fmt.reg(f), fmt.dur(f.flightMinutes), fmt.dur(f.blockMinutes)])} /></div>}
           </div>
         )}

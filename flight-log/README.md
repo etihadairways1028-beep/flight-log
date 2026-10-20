@@ -86,7 +86,12 @@ For local cloud testing, copy `.env.example` to `.env.local` and fill in your va
 | **Reports & Export** | Monthly, annual, aircraft, route, airport, hours and custom reports; print / Save as PDF; CSV export & template; JSON backup with photos; CSV import with column mapping, validation, duplicate detection and preview; merge or replace restore with confirmation |
 | **Settings** | Account & sync, profile and avatar, flying type, units (km/NM/mi, ft/m, kt/km/h/mph), H:MM or decimal, date/time formats, time zones, theme, reduce transparency, sounds and volume, defaults, dashboard card order, privacy, integrations status, storage usage |
 | **Integrations** | **SimBrief**: fetch your latest OFP into a planned sim flight. MSFS/X-Plane/live tracking/weather show honest *Not connected* status, since they need a local bridge or server-side key |
-| **Feel** | Liquid-glass design system, Geist + Geist Mono, synthesised cabin-chime sounds (toggleable), page/number/chart transitions, `prefers-reduced-motion` respected, keyboard shortcuts (`N` new flight, `⌘K` / `/` search) |
+| **Quick logging** | Quick-fill panel and Overview quick-log bar: **SimBrief** (latest OFP, optionally logged as flown), **boarding-pass scan** (camera or photo; PDF417/Aztec/QR IATA BCBP, decoded on-device), **paste booking text** (flight, route, date, times, aircraft, seat), **return** / **repeat** last flight, one-tap frequent routes, airline auto-fill from the flight number, **Mark as flown** for planned flights |
+| **Flight plans** | SimBrief imports keep the full filed plan: route string, every navlog fix with altitude and elapsed time, planned distance and time, alternate, cost index, wind, fuel plan and a link to the OFP. The map draws the **filed route through its waypoints** instead of a straight great circle |
+| **Pilot logbook** | PIC, SIC, dual, instructor, solo, night (with a **sun-position night estimate** along the route), actual/simulated instrument, cross-country, approaches, holds; day/night takeoffs and landings; **90-day passenger and night recency**; totals for 28 days / 90 days / 12 months / calendar year / all time, real and sim kept apart; Pilot logbook report; all columns in CSV import/export |
+| **Sharing** | Boarding-pass style image of any flight, plus the all-time / yearly summary card |
+| **Offline & install** | Works offline after the first visit (service worker); installable to the home screen or dock |
+| **Feel** | Liquid-glass design system, Geist + Geist Mono, synthesised cabin-chime sounds (toggleable), page/number/chart transitions, `prefers-reduced-motion` respected, keyboard shortcuts (`N` new flight, `⌘K` / `/` search, `G` then a letter to jump between pages, `?` for the full list) |
 
 ### Data model and correctness
 

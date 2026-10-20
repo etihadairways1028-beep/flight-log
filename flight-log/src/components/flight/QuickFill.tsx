@@ -68,7 +68,7 @@ export function QuickFill({ initial, onApply }: { initial: QuickPanel; onApply: 
 const fresh = (f: Flight): Flight => ({
   ...f, id: `f_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`, date: new Date().toISOString().slice(0, 10), status: 'completed', source: 'manual',
   times: { schedOut: null, schedIn: null, offBlock: null, takeoff: null, landing: null, onBlock: null },
-  flightMinutes: null, flightMinutesSource: null, blockMinutes: null, blockMinutesSource: null, photos: [], notes: '', rating: null, weather: '', recordedDistanceKm: null,
+  flightMinutes: null, flightMinutesSource: null, blockMinutes: null, blockMinutesSource: null, photos: [], notes: '', rating: null, weather: '', recordedDistanceKm: null, flightPlan: undefined,
   createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
 });
 export const returnOf = (f: Flight): Flight => ({ ...fresh(f), dep: f.arr, arr: f.dep, flightNumber: '', callsign: '', seat: '', plannedRoute: '', actualRoute: '' });

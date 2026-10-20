@@ -2,7 +2,7 @@
 // public XML fetcher (https://www.simbrief.com/api/xml.fetcher.php?username=…&json=1).
 // No API key is needed for reading your own latest flight plan. Requests go straight
 // from the browser; if SimBrief blocks the request (CORS / network), we report it.
-import type { Flight } from './types';
+import type { Flight, PlanFix } from './types';
 import { emptyFlight, finalizeFlight } from './flight';
 import { findAirport, toRef } from './airports';
 import { aircraftType } from './aircraftTypes';
@@ -22,6 +22,14 @@ export async function fetchLatestOfp(username: string, opts: { asFlown?: boolean
   if (!res.ok) throw new Error(`SimBrief returned HTTP ${res.status}.`);
   const j = await res.json().catch(() => null);
   if (!j || j.fetch?.status && !/success/i.test(j.fetch.status)) throw new Error(j?.fetch?.status || 'SimBrief returned an unexpected response.');
+  return parseOfp(j, opts);
+}
+
+const asList = <T,>(v: T | T[] | undefined | null): T[] => (Array.isArray(v) ? v : v ? [v] : []);
+const numOr = (v: unknown): number | null => { const n = Number(v); return v !== '' && v != null && Number.isFinite(n) ? n : null; };
+
+/** Convert a SimBrief OFP (JSON) into a Flight with its full filed flight plan. */
+export function parseOfp(j: any, opts: { asFlown?: boolean } = {}): Flight {
 
   const dep = findAirport(j.origin?.icao_code), arr = findAirport(j.destination?.icao_code);
   if (!dep || !arr) throw new Error(`Unknown airport in the OFP (${j.origin?.icao_code} → ${j.destination?.icao_code}).`);
@@ -59,5 +67,31 @@ export async function fetchLatestOfp(username: string, opts: { asFlown?: boolean
   f.simulator = '';
   f.role = 'sim-pilot';
   f.tags = ['simbrief'];
+  const units: 'kg' | 'lb' = /lb/i.test(String(j.params?.units ?? '')) ? 'lb' : 'kg';
+  const fixes: PlanFix[] = asList(j.navlog?.fix).map((x: any) => ({
+    ident: String(x.ident ?? ''), name: String(x.name ?? ''), type: String(x.type ?? ''),
+    lat: Number(x.pos_lat), lon: Number(x.pos_long), altFt: numOr(x.altitude_feet),
+    airway: String(x.via_airway ?? ''), stage: String(x.stage ?? ''), elapsedMin: numOr(x.time_total) != null ? Math.round(Number(x.time_total) / 60) : null,
+  })).filter((x: PlanFix) => Number.isFinite(x.lat) && Number.isFinite(x.lon) && x.ident);
+  const altn = asList(j.alternate)[0] as any;
+  const pdf = j.files?.pdf?.link ? `${j.files?.directory ?? 'https://www.simbrief.com/ofp/flightplans/'}${j.files.pdf.link}` : '';
+  f.flightPlan = {
+    source: 'simbrief',
+    route: String(j.general?.route ?? ''),
+    fixes,
+    routeDistanceNm: numOr(j.general?.route_distance),
+    airDistanceNm: numOr(j.general?.air_distance),
+    plannedEteMin: numOr(j.times?.est_time_enroute) != null ? Math.round(Number(j.times.est_time_enroute) / 60) : null,
+    cruiseFl: f.flightLevel,
+    costIndex: String(j.general?.costindex ?? ''),
+    alternate: String(altn?.icao_code ?? ''),
+    airac: String(j.params?.airac ?? ''),
+    fuelUnit: units,
+    fuel: { ramp: numOr(j.fuel?.plan_ramp), takeoff: numOr(j.fuel?.plan_takeoff), trip: numOr(j.fuel?.est_burn), reserve: numOr(j.fuel?.reserve), alternate: numOr(j.fuel?.alternate_burn), contingency: numOr(j.fuel?.contingency), landing: numOr(j.fuel?.plan_landing) },
+    avgWind: j.general?.avg_wind_comp != null ? `${Number(j.general.avg_wind_comp) >= 0 ? 'Tailwind' : 'Headwind'} ${Math.abs(Number(j.general.avg_wind_comp))} kt` : '',
+    ofpUrl: pdf,
+    requestId: String(j.params?.request_id ?? ''),
+    generatedAt: numOr(j.params?.time_generated) ? new Date(Number(j.params.time_generated) * 1000).toISOString() : null,
+  };
   return finalizeFlight(f);
 }

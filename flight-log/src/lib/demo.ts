@@ -9,6 +9,8 @@ import { findAirport, toRef } from './airports';
 import { aircraftType } from './aircraftTypes';
 import { haversineKm } from './geo';
 import { wallToUtc } from './time';
+import { estimateNightMinutes, isNight } from './pilot';
+import { emptyPilot } from './types';
 
 function rng(seed: number) {
   return () => {
@@ -88,6 +90,14 @@ function build(dep: string, arr: string, date: string, r: () => number, cat: Fli
   f.simulator = sim ? (r() > 0.4 ? 'MSFS 2024' : 'X-Plane 12') : '';
   f.rating = 3 + Math.floor(r() * 3);
   f.tags = ['demo', ...(sim ? ['sim'] : r() > 0.6 ? ['holiday'] : r() > 0.5 ? ['work'] : [])];
+  if (sim) {
+    // sim sessions: flown as PIC, one takeoff and landing
+    const fin0 = finalizeFlight(f);
+    const night = estimateNightMinutes(fin0) ?? 0;
+    const nightLanding = fin0.arr && fin0.times.landing ? isNight(new Date(fin0.times.landing), fin0.arr.lat!, fin0.arr.lon!) : false;
+    f.pilot = { ...emptyPilot(), pic: fin0.flightMinutes, night: night || null, ifrSim: null };
+    f.takeoffsDay = 1; f.landingsDay = nightLanding ? 0 : 1; f.landingsNight = nightLanding ? 1 : 0; f.takeoffsNight = 0;
+  }
   f.notes = sim
     ? 'DEMO — fictional simulator session for exploring Flight Log.'
     : 'DEMO — fictional flight. Delete or reset the demo workspace any time from Settings.';
@@ -126,6 +136,35 @@ export function generateDemoFlights(today = DateTime.local()): Flight[] {
       }
     }
   }
+  // a short block of fictional flight-school training in a Cessna 172 / DA40
+  const legs: [string, string][] = [['OMAL', 'OMAD'], ['OMAD', 'OMAL'], ['OMAL', 'OMFJ'], ['OMFJ', 'OMAL'], ['OMAL', 'OMRK'], ['OMRK', 'OMAL'], ['OMAL', 'OMAD'], ['OMAD', 'OMAL']];
+  legs.forEach(([x, y], i) => {
+    const date = today.minus({ days: 110 - i * 13 }).toISODate()!;
+    const fl = build(x, y, date, r, 'training', 1000 + i);
+    if (!fl) return;
+    const t = i % 3 === 0 ? 'DA40' : 'C172';
+    const at = aircraftType(t)!;
+    fl.aircraft = { typeCode: t, manufacturer: at.manufacturer, model: at.model, variant: '', registration: `DEMO-T${(i % 2) + 1}`, nickname: '' };
+    fl.airline = 'Demo Flight School';
+    fl.flightNumber = '';
+    fl.callsign = `DMO${21 + (i % 2)}`;
+    fl.role = i < 4 ? 'dual' : 'pic';
+    fl.seat = 'Left seat';
+    fl.cruiseAltitudeFt = 4500; fl.flightLevel = '';
+    // rebuild times for a light aircraft at ~105 kt
+    const air = Math.round((fl.distanceKm! / 195) * 60) + 12;
+    fl.times.takeoff = new Date(Date.parse(fl.times.offBlock!) + 12 * 60000).toISOString().replace('.000Z', 'Z');
+    fl.times.landing = new Date(Date.parse(fl.times.takeoff) + air * 60000).toISOString().replace('.000Z', 'Z');
+    fl.times.onBlock = new Date(Date.parse(fl.times.landing) + 6 * 60000).toISOString().replace('.000Z', 'Z');
+    fl.times.schedOut = null; fl.times.schedIn = null;
+    const fin = finalizeFlight(fl);
+    fin.pilot = { ...emptyPilot(), pic: i < 4 ? null : fin.flightMinutes, dual: i < 4 ? fin.flightMinutes : null, xc: fin.flightMinutes, night: null, ifrSim: i % 4 === 1 ? 18 : null, approaches: i % 4 === 1 ? 1 : null };
+    fin.takeoffsDay = 2; fin.landingsDay = 2; fin.takeoffsNight = i === 7 ? 1 : 0; fin.landingsNight = i === 7 ? 1 : 0;
+    fin.notes = 'DEMO — fictional training flight (circuits and a cross-country leg).';
+    fin.tags = ['demo', 'training'];
+    flights.push(fin);
+  });
+
   // one planned future trip, so the planned state is visible
   const fut = build('OMAA', 'NZAA', today.plus({ days: 24 }).toISODate()!, r, 'real', idx++);
   if (fut) {

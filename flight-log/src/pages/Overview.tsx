@@ -125,6 +125,7 @@ export default function Overview() {
       </section>
 
       <QuickLogBar latest={latest} />
+      {(s.profile === 'pilot' || s.profile === 'student') && <RecencyCards flights={flights} compact />}
 
       {/* Key statistics */}
       <section aria-label="Key statistics" className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
@@ -172,7 +173,7 @@ export default function Overview() {
         <Segmented label="Overview range" size="sm" value={range} onChange={setRange} options={[{ value: '12', label: '12 months' }, { value: '24', label: '24 months' }, { value: 'all', label: 'All time' }]} />
       </div>
       <section className="grid gap-4 lg:grid-cols-3">
-        <ChartCard className="lg:col-span-2" eyebrow="Monthly" title="Flight hours" action={hasSim ? <Legend items={[{ label: 'Real-world', color: '#5b9bff' }, { label: 'Simulator', color: '#5ee0ef' }]} /> : undefined} empty={!months.length}>
+        <ChartCard hidden={!s.dashboardCharts.includes('monthlyHours')} className="lg:col-span-2" eyebrow="Monthly" title="Flight hours" action={hasSim ? <Legend items={[{ label: 'Real-world', color: '#5b9bff' }, { label: 'Simulator', color: '#5ee0ef' }]} /> : undefined} empty={!months.length}>
           <div className="h-[240px]">
             <ResponsiveContainer>
               <BarChart data={months} margin={{ top: 4, right: 4, left: -2, bottom: 0 }} barCategoryGap="22%">
@@ -186,7 +187,7 @@ export default function Overview() {
             </ResponsiveContainer>
           </div>
         </ChartCard>
-        <ChartCard eyebrow="Monthly" title="Flights per month" empty={!months.length}>
+        <ChartCard hidden={!s.dashboardCharts.includes('flightsPerMonth')} eyebrow="Monthly" title="Flights per month" empty={!months.length}>
           <div className="h-[240px]">
             <ResponsiveContainer>
               <AreaChart data={months} margin={{ top: 4, right: 4, left: -10, bottom: 0 }}>
@@ -200,7 +201,7 @@ export default function Overview() {
             </ResponsiveContainer>
           </div>
         </ChartCard>
-        <ChartCard eyebrow="Progression" title="Cumulative flight hours" empty={!months.length} footer="Includes all flights logged before the selected range.">
+        <ChartCard hidden={!s.dashboardCharts.includes('cumulative')} eyebrow="Progression" title="Cumulative flight hours" empty={!months.length} footer="Includes all flights logged before the selected range.">
           <div className="h-[200px]">
             <ResponsiveContainer>
               <AreaChart data={months} margin={{ top: 4, right: 4, left: -2, bottom: 0 }}>
@@ -214,13 +215,13 @@ export default function Overview() {
             </ResponsiveContainer>
           </div>
         </ChartCard>
-        <ChartCard eyebrow="Fleet" title="Flights by aircraft type" empty={!byType.length} action={<Link to="/aircraft" className="link text-[12px]">All aircraft</Link>}>
+        <ChartCard hidden={!s.dashboardCharts.includes('byType')} eyebrow="Fleet" title="Flights by aircraft type" empty={!byType.length} action={<Link to="/aircraft" className="link text-[12px]">All aircraft</Link>}>
           <RankBars rows={byType.map((g) => ({ key: g.key, label: <><span className="mono mr-2 text-ice">{g.key}</span>{g.label}</>, value: g.flights }))} format={(v) => `${v}`} onClick={(k) => nav(`/aircraft/${encodeURIComponent(k)}`)} />
         </ChartCard>
-        <ChartCard eyebrow="Operators" title="Flights by airline" empty={!byAirline.length}>
+        <ChartCard hidden={!s.dashboardCharts.includes('byAirline')} eyebrow="Operators" title="Flights by airline" empty={!byAirline.length}>
           <RankBars rows={byAirline.map((g) => ({ key: g.key, label: g.key, value: g.flights }))} format={(v) => `${v}`} onClick={(k) => nav(`/flights?airline=${encodeURIComponent(k)}`)} />
         </ChartCard>
-        <ChartCard eyebrow="Mix" title="Flights by category" empty={!byCat.length}>
+        <ChartCard hidden={!s.dashboardCharts.includes('byCategory')} eyebrow="Mix" title="Flights by category" empty={!byCat.length}>
           <div className="flex h-3 overflow-hidden rounded-full bg-white/[0.06]">
             {byCat.map((g) => <div key={g.key} style={{ width: `${(g.flights / Math.max(1, rangeFlights.length)) * 100}%`, background: CAT_COLOR[g.key as FlightCategory] }} title={`${CATEGORY_LABEL[g.key as FlightCategory]}: ${g.flights}`} />)}
           </div>
@@ -237,10 +238,10 @@ export default function Overview() {
             ))}
           </ul>
         </ChartCard>
-        <ChartCard eyebrow="Places" title="Most visited airports" empty={!topAirports.length} action={<Link to="/airports?filter=visited" className="link text-[12px]">All airports</Link>}>
+        <ChartCard hidden={!s.dashboardCharts.includes('topAirports')} eyebrow="Places" title="Most visited airports" empty={!topAirports.length} action={<Link to="/airports?filter=visited" className="link text-[12px]">All airports</Link>}>
           <RankBars rows={topAirports.map((a) => ({ key: a.ident, label: <><span className="mono mr-2 text-ice">{a.label}</span>{a.city || a.name}</>, value: a.total }))} format={(v) => `${v}`} onClick={(k) => nav(`/airports/${k}`)} />
         </ChartCard>
-        <ChartCard eyebrow="Borders" title="Domestic vs international" empty={split.domestic + split.international === 0} footer={split.unknown ? `${split.unknown} flights without country data are left out.` : 'Based on the departure and arrival airport countries.'}>
+        <ChartCard hidden={!s.dashboardCharts.includes('domestic')} eyebrow="Borders" title="Domestic vs international" empty={split.domestic + split.international === 0} footer={split.unknown ? `${split.unknown} flights without country data are left out.` : 'Based on the departure and arrival airport countries.'}>
           <div className="flex items-end gap-6">
             <div><div className="text-[30px] font-semibold num leading-none">{split.international}</div><div className="mt-1 text-[12px] text-muted">International</div></div>
             <div><div className="text-[30px] font-semibold num leading-none text-muted">{split.domestic}</div><div className="mt-1 text-[12px] text-muted">Domestic</div></div>
@@ -387,3 +388,5 @@ function QuickLogBar({ latest }: { latest: Flight | undefined }) {
     </section>
   );
 }
+
+import { RecencyCards } from '../components/charts/Recency';

@@ -1,12 +1,12 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import * as DM from '@radix-ui/react-dropdown-menu';
 import * as Popover from '@radix-ui/react-popover';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Bell, ChevronsLeft, Plus, Search, MoreHorizontal, FlaskConical, User, Upload, LogOut, LogIn, CheckCheck, Trash2, X, AlertTriangle, Cloud, CloudOff, RefreshCw } from 'lucide-react';
+import { Bell, ChevronsLeft, Plus, Search, MoreHorizontal, FlaskConical, User, Upload, LogOut, LogIn, CheckCheck, Trash2, X, AlertTriangle, Cloud, CloudOff, RefreshCw, Keyboard } from 'lucide-react';
 import { setAuthChoice } from '../../lib/cloud';
 import { NAV } from './nav';
-import { cx, PlaneGlyph } from '../ui';
+import { cx, PlaneGlyph, Dialog } from '../ui';
 import { useStore } from '../../store/useStore';
 import { LogoMark, Wordmark } from './Brand';
 import { CommandSearch } from './CommandSearch';
@@ -167,6 +167,7 @@ function ProfileMenu() {
           </div>
           <DM.Separator className="my-1 h-px bg-white/[0.07]" />
           <DM.Item className={item} onSelect={() => nav('/settings')}><User className="h-4 w-4 text-muted" />Profile & settings</DM.Item>
+          <DM.Item className={item} onSelect={() => window.dispatchEvent(new KeyboardEvent('keydown', { key: '?' }))}><Keyboard className="h-4 w-4 text-muted" />Keyboard shortcuts</DM.Item>
           <DM.Item className={item} onSelect={() => nav('/reports#import')}><Upload className="h-4 w-4 text-muted" />Import flights</DM.Item>
           <DM.Item className={item} onSelect={() => setWorkspace(ws === 'demo' ? 'personal' : 'demo')}><FlaskConical className="h-4 w-4 text-muted" />{ws === 'demo' ? 'Back to my logbook' : 'Open demo workspace'}</DM.Item>
           <DM.Separator className="my-1 h-px bg-white/[0.07]" />
@@ -298,6 +299,9 @@ function SaveErrorBanner() {
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const [search, setSearch] = useState(false);
+  const [help, setHelp] = useState(false);
+  const gPressed = useRef(false);
+  const navigate = useNavigate();
   const openForm = useStore((s) => s.openForm);
   const formOpen = useStore((s) => s.form.open);
   const loc = useLocation();
@@ -314,6 +318,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setSearch(true); }
       else if (!typing && !formOpen && e.key === '/') { e.preventDefault(); setSearch(true); }
       else if (!typing && !formOpen && e.key.toLowerCase() === 'n' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); openForm(); }
+      else if (!typing && !formOpen && e.key === '?') { e.preventDefault(); setHelp(true); }
+      else if (!typing && !formOpen && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        if (gPressed.current && GO[e.key.toLowerCase()]) { e.preventDefault(); navigate(GO[e.key.toLowerCase()]); gPressed.current = false; return; }
+        gPressed.current = e.key.toLowerCase() === 'g';
+        if (gPressed.current) setTimeout(() => { gPressed.current = false; }, 1200);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -339,8 +349,33 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </div>
       <MobileNav />
       <CommandSearch open={search} onOpenChange={setSearch} />
+      <ShortcutsDialog open={help} onOpenChange={setHelp} />
       <Toasts />
       <Celebration />
     </div>
+  );
+}
+
+const GO: Record<string, string> = { o: '/', f: '/flights', a: '/analytics', m: '/map', p: '/airports', c: '/calendar', r: '/reports', s: '/settings', h: '/achievements' };
+
+function ShortcutsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
+  const rows: [string[], string][] = [
+    [['N'], 'Log a new flight'], [['⌘', 'K'], 'Search everything'], [['/'], 'Search everything'], [['?'], 'Show this list'],
+    [['G', 'O'], 'Go to Overview'], [['G', 'F'], 'Go to My Flights'], [['G', 'A'], 'Go to Analytics'], [['G', 'M'], 'Go to the map'],
+    [['G', 'P'], 'Go to Airports'], [['G', 'C'], 'Go to Calendar'], [['G', 'H'], 'Go to Achievements'], [['G', 'R'], 'Go to Reports'], [['G', 'S'], 'Go to Settings'],
+    [['Esc'], 'Close a dialog'],
+  ];
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange} title="Keyboard shortcuts" size="sm">
+      <ul className="divide-y divide-white/[0.06]">
+        {rows.map(([keys, label]) => (
+          <li key={label + keys.join()} className="flex items-center justify-between py-2.5 text-[13px]">
+            <span className="text-muted">{label}</span>
+            <span className="flex gap-1">{keys.map((k) => <kbd key={k} className="min-w-[26px] rounded-md bg-white/[0.07] px-1.5 py-0.5 text-center font-mono text-[12px] ring-1 ring-white/10">{k}</kbd>)}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-3 text-[11.5px] text-faint">For “G then a letter”, press G, release, then the letter.</p>
+    </Dialog>
   );
 }

@@ -264,3 +264,66 @@ describe('quick entry', () => {
     expect(r.registration).toBe('G-STBA');
   });
 });
+
+import { sunAltitude, estimateNightMinutes, computeRecency } from '../lib/pilot';
+describe('pilot', () => {
+  it('sun altitude is plausible', () => {
+    // Abu Dhabi, equinox local noon (≈08:20Z) → high sun; local midnight → well below horizon
+    expect(sunAltitude(new Date('2026-03-20T08:20:00Z'), 24.45, 54.65)).toBeGreaterThan(60);
+    expect(sunAltitude(new Date('2026-03-20T20:20:00Z'), 24.45, 54.65)).toBeLessThan(-30);
+  });
+  it('overnight AUH→SIN is mostly night', () => {
+    const f = mk('OMAA', 'WSSS', '2026-03-14', '0 21:50', '0 22:10', '1 08:55', '1 09:10');
+    const n = estimateNightMinutes(f)!;
+    expect(n).toBeGreaterThan(240);
+    expect(n).toBeLessThanOrEqual(f.flightMinutes!);
+  });
+  it('recency counts 3 landings in 90 days', () => {
+    const today = DT.fromISO('2026-10-20');
+    const a = { ...mk('OMAA', 'OMDB', '2026-10-01', '0 10:00', '0 10:10', '0 10:40', '0 10:50'), takeoffsDay: 2, landingsDay: 2 };
+    const b = { ...mk('OMDB', 'OMAA', '2026-09-15', '0 10:00', '0 10:10', '0 10:40', '0 10:50'), takeoffsDay: 1, landingsDay: 1 };
+    const r = computeRecency([a, b], today)[0];
+    expect(r.met).toBe(true);
+    expect(r.validUntil).toBe('2026-12-14');
+    expect(computeRecency([a], today)[0].met).toBe(false);
+  });
+});
+
+import { parseOfp } from '../lib/simbrief';
+import { plannedPath } from '../lib/flight';
+describe('simbrief OFP', () => {
+  const ofp = {
+    params: { request_id: '123', units: 'kgs', airac: '2610', time_generated: '1773500000' },
+    general: { icao_airline: 'TST', flight_number: '101', route: 'DCT TESTA UL123 TESTB DCT', route_distance: '2830', air_distance: '2950', costindex: '30', initial_altitude: '37000', avg_wind_comp: '-25' },
+    origin: { icao_code: 'OMAA' }, destination: { icao_code: 'WSSS' }, alternate: { icao_code: 'WMKK' },
+    aircraft: { icaocode: 'B789', reg: 'TEST1' }, atc: { callsign: 'TST101' },
+    times: { sched_out: '1773521400', sched_off: '1773522600', sched_on: '1773546900', sched_in: '1773547800', est_time_enroute: '24300' },
+    fuel: { plan_ramp: '42000', plan_takeoff: '41700', est_burn: '33800', reserve: '2900', alternate_burn: '1800', contingency: '1700', plan_landing: '7900' },
+    files: { directory: 'https://www.simbrief.com/ofp/flightplans/', pdf: { link: 'OMAAWSSS_PDF_1.pdf' } },
+    navlog: { fix: [
+      { ident: 'TESTA', type: 'wpt', pos_lat: '23.10', pos_long: '58.20', altitude_feet: '24000', via_airway: 'DCT', stage: 'CLB', time_total: '1200' },
+      { ident: 'TOC', type: 'ltlg', pos_lat: '22.50', pos_long: '60.00', altitude_feet: '37000', via_airway: 'UL123', stage: 'CRZ', time_total: '1800' },
+      { ident: 'TESTB', type: 'vor', pos_lat: '10.00', pos_long: '85.00', altitude_feet: '37000', via_airway: 'UL123', stage: 'CRZ', time_total: '14000' },
+      { ident: 'WSSS', type: 'apt', pos_lat: '1.35', pos_long: '103.99', altitude_feet: '22', via_airway: 'DCT', stage: 'DSC', time_total: '24300' },
+    ] },
+  };
+  it('keeps the whole flight plan', () => {
+    const f = parseOfp(ofp, { asFlown: true });
+    expect(f.dep?.ident).toBe('OMAA');
+    expect(f.flightPlan?.fixes.length).toBe(4);
+    expect(f.flightPlan?.alternate).toBe('WMKK');
+    expect(f.flightPlan?.routeDistanceNm).toBe(2830);
+    expect(f.flightPlan?.fuel.trip).toBe(33800);
+    expect(f.flightPlan?.ofpUrl).toBe('https://www.simbrief.com/ofp/flightplans/OMAAWSSS_PDF_1.pdf');
+    expect(f.flightPlan?.avgWind).toBe('Headwind 25 kt');
+    expect(f.status).toBe('completed');
+    expect(f.flightMinutes).toBe(405);
+    const p = plannedPath(f)!;
+    expect(p[0]).toEqual([f.dep!.lon, f.dep!.lat]);
+    expect(p.length).toBe(5); // dep + 3 fixes (destination fix dropped) + arr
+  });
+  it('survives a JSON backup round trip', () => {
+    const f = parseOfp(ofp);
+    expect(coerceFlight(JSON.parse(JSON.stringify(f))).flight!.flightPlan!.fixes.length).toBe(4);
+  });
+});

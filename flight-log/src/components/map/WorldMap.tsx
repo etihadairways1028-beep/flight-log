@@ -7,13 +7,13 @@ import { feature } from 'topojson-client';
 import world from 'world-atlas/countries-110m.json';
 import { Minus, Plus, Maximize2 } from 'lucide-react';
 import type { Flight } from '../../lib/types';
-import { isCounted, routeKey } from '../../lib/flight';
+import { isCounted, routeKey, plannedPath } from '../../lib/flight';
 import { cx } from '../ui';
 
 const land = feature(world as any, (world as any).objects.countries) as any;
 const graticule = geoGraticule10();
 
-export interface MapRoute { key: string; a: [number, number]; b: [number, number]; count: number; flights: string[]; sim: number; label: string }
+export interface MapRoute { key: string; a: [number, number]; b: [number, number]; count: number; flights: string[]; sim: number; label: string; path?: [number, number][] }
 export interface MapAirport { ident: string; label: string; name: string; lon: number; lat: number; visits: number }
 
 export function buildMapData(flights: Flight[]) {
@@ -32,6 +32,7 @@ export function buildMapData(flights: Flight[]) {
     const k = routeKey(f)!;
     const r = routes.get(k) ?? { key: k, a: [d.lon, d.lat], b: [a.lon, a.lat], count: 0, flights: [], sim: 0, label: k };
     r.count++; r.flights.push(f.id);
+    if (!r.path) { const p = plannedPath(f); if (p) r.path = p; }
     if (f.category === 'simulator') r.sim++;
     routes.set(k, r);
   }
@@ -56,6 +57,7 @@ export interface WorldMapProps {
   selectedRoute?: string | null;
   selectedAirport?: string | null;
   showLabels?: boolean;
+  fixes?: { ident: string; lon: number; lat: number }[];
   onRoute?: (r: MapRoute, at: { x: number; y: number }) => void;
   onAirport?: (a: MapAirport, at: { x: number; y: number }) => void;
   onBackground?: () => void;
@@ -63,7 +65,7 @@ export interface WorldMapProps {
   children?: React.ReactNode;
 }
 
-export function WorldMap({ routes, airports, height = 420, center = 0, fit, interactive = true, wheelZoom = false, heat = false, selectedRoute, selectedAirport, showLabels = true, onRoute, onAirport, onBackground, className, children }: WorldMapProps) {
+export function WorldMap({ routes, airports, height = 420, center = 0, fit, interactive = true, wheelZoom = false, heat = false, selectedRoute, selectedAirport, showLabels = true, fixes, onRoute, onAirport, onBackground, className, children }: WorldMapProps) {
   const wrap = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const zoomRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null);
@@ -171,7 +173,7 @@ export function WorldMap({ routes, airports, height = 420, center = 0, fit, inte
           )}
           <g fill="none" strokeLinecap="round">
             {routes.map((r) => {
-              const d = path({ type: 'LineString', coordinates: [r.a, r.b] } as any);
+              const d = path({ type: 'LineString', coordinates: r.path ?? [r.a, r.b] } as any);
               if (!d) return null;
               const w = r.count / maxCount;
               const sel = selectedRoute === r.key, hov = hover === r.key;
@@ -184,6 +186,22 @@ export function WorldMap({ routes, airports, height = 420, center = 0, fit, inte
               );
             })}
           </g>
+          {fixes && fixes.length > 0 && (
+            <g pointerEvents="none">
+              {fixes.map((x, i) => {
+                const p = projection([x.lon, x.lat]);
+                if (!p) return null;
+                const s = 3.2 / Math.sqrt(t.k);
+                const label = fixes.length <= 30 || t.k > 2.2 || i % Math.ceil(fixes.length / 18) === 0;
+                return (
+                  <g key={x.ident + i} transform={`translate(${p[0]},${p[1]})`}>
+                    <rect x={-s} y={-s} width={s * 2} height={s * 2} transform="rotate(45)" fill="#0b1630" stroke="#5ee0ef" strokeWidth={1.2 / t.k} />
+                    {label && <text x={5 / t.k} y={-5 / t.k} fontSize={9 / t.k} fontFamily="'Geist Mono Variable', ui-monospace, monospace" fill="rgb(94 224 239 / .9)" stroke="#050c1c" strokeWidth={2.5 / t.k} paintOrder="stroke">{x.ident}</text>}
+                  </g>
+                );
+              })}
+            </g>
+          )}
           <g>
             {airports.map((a) => {
               const p = projection([a.lon, a.lat]);

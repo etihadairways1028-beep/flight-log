@@ -110,10 +110,75 @@ export interface Flight {
   photos: string[];                // photo ids (stored separately)
   notes: string;
   simulator: string;               // e.g. MSFS 2024, X-Plane 12
+  /** Pilot logbook times (minutes) and counts. Optional — only pilots fill these in. */
+  pilot?: PilotTimes;
+  /** Filed flight plan (e.g. from a SimBrief OFP). */
+  flightPlan?: FlightPlan;
   source: 'manual' | 'csv' | 'json' | 'simbrief' | 'demo' | 'duplicate';
   createdAt: string;
   updatedAt: string;
 }
+
+export interface PlanFix {
+  ident: string;
+  name: string;
+  type: string;          // wpt, vor, ndb, apt, ltlg, toc, tod …
+  lat: number;
+  lon: number;
+  altFt: number | null;
+  airway: string;        // airway or DCT used to reach this fix
+  stage: string;         // CLB / CRZ / DSC
+  elapsedMin: number | null;
+}
+
+export interface FlightPlan {
+  source: 'simbrief' | 'manual';
+  route: string;
+  fixes: PlanFix[];
+  routeDistanceNm: number | null;
+  airDistanceNm: number | null;
+  plannedEteMin: number | null;
+  cruiseFl: string;
+  costIndex: string;
+  alternate: string;
+  airac: string;
+  fuelUnit: 'kg' | 'lb';
+  fuel: { ramp: number | null; takeoff: number | null; trip: number | null; reserve: number | null; alternate: number | null; contingency: number | null; landing: number | null };
+  avgWind: string;
+  ofpUrl: string;
+  requestId: string;
+  generatedAt: string | null;
+}
+
+export interface PilotTimes {
+  pic: number | null;
+  sic: number | null;
+  dual: number | null;        // dual instruction received
+  instructor: number | null;  // dual given
+  solo: number | null;
+  night: number | null;
+  ifrActual: number | null;
+  ifrSim: number | null;      // simulated instrument (hood)
+  xc: number | null;          // cross-country
+  approaches: number | null;
+  holds: number | null;
+}
+
+export const PILOT_FIELDS: { key: keyof PilotTimes; label: string; kind: 'time' | 'count'; tip: string }[] = [
+  { key: 'pic', label: 'PIC', kind: 'time', tip: 'Pilot in command time.' },
+  { key: 'sic', label: 'SIC / co-pilot', kind: 'time', tip: 'Second in command / co-pilot time.' },
+  { key: 'dual', label: 'Dual received', kind: 'time', tip: 'Instruction received from an instructor.' },
+  { key: 'instructor', label: 'Instructor', kind: 'time', tip: 'Instruction given (dual given).' },
+  { key: 'solo', label: 'Solo', kind: 'time', tip: 'Solo flight time as a student.' },
+  { key: 'night', label: 'Night', kind: 'time', tip: 'Time flown at night. Use “Estimate” to calculate it from the route and the sun.' },
+  { key: 'ifrActual', label: 'Actual instrument', kind: 'time', tip: 'Flight in actual instrument meteorological conditions.' },
+  { key: 'ifrSim', label: 'Simulated instrument', kind: 'time', tip: 'Instrument flight under a hood or view-limiting device.' },
+  { key: 'xc', label: 'Cross-country', kind: 'time', tip: 'Cross-country time, as your authority defines it.' },
+  { key: 'approaches', label: 'Approaches', kind: 'count', tip: 'Instrument approaches flown.' },
+  { key: 'holds', label: 'Holds', kind: 'count', tip: 'Holding procedures flown.' },
+];
+
+export const emptyPilot = (): PilotTimes => ({ pic: null, sic: null, dual: null, instructor: null, solo: null, night: null, ifrActual: null, ifrSim: null, xc: null, approaches: null, holds: null });
 
 export interface PhotoRecord {
   id: string;

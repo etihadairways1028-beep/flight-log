@@ -1,13 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ChevronDown, Clock, Plane, Route as RouteIcon, NotebookPen, Users, Info, AlertTriangle, ImagePlus, Trash2, ArrowLeftRight, Sparkles, Globe2 } from 'lucide-react';
+import { GraduationCap, ChevronDown, Clock, Plane, Route as RouteIcon, NotebookPen, Users, Info, AlertTriangle, ImagePlus, Trash2, ArrowLeftRight, Sparkles, Globe2 } from 'lucide-react';
 import { useStore } from '../../store/useStore';
 import { Dialog, Field, Segmented, Stars, Tip, cx } from '../ui';
 import { AirportPicker, AircraftTypePicker, AirlineInput } from './Pickers';
 import { emptyFlight, finalizeFlight, missingFields } from '../../lib/flight';
 import type { Flight, FlightCategory, FlightRole, FlightStatus, FlightTimes } from '../../lib/types';
-import { CATEGORY_LABEL, ROLE_LABEL, STATUS_LABEL } from '../../lib/types';
+import { CATEGORY_LABEL, ROLE_LABEL, STATUS_LABEL, PILOT_FIELDS, emptyPilot } from '../../lib/types';
+import { estimateNightMinutes } from '../../lib/pilot';
+import { hasPilotData } from '../../lib/flight';
 import { deriveDurations, fmtDurationLong, isValidISODate, minutesBetween, parseDurationInput, timingIssues, utcToWall, wallToUtc, zoneOffsetLabel, fmtDuration } from '../../lib/time';
 import { distanceBetween } from '../../lib/geo';
 import { useFmt } from '../../lib/useFmt';
@@ -71,6 +73,26 @@ async function compressImage(file: File, max = 1600): Promise<string> {
   }
 }
 
+function PilotField({ label, tip, kind, value, total, onChange, extra }: { label: string; tip: string; kind: 'time' | 'count'; value: number | null; total: number | null; onChange: (v: number | null) => void; extra?: React.ReactNode }) {
+  const [text, setText] = useState('');
+  useEffect(() => { setText(value == null ? '' : kind === 'time' ? fmtDuration(value) : String(value)); }, [value, kind]);
+  const bad = text.trim() !== '' && (kind === 'time' ? parseDurationInput(text) == null : !/^\d{1,3}$/.test(text.trim()));
+  return (
+    <div className="min-w-0">
+      <div className="mb-1 flex items-center gap-1.5 text-[12px] font-medium text-muted">
+        <Tip text={tip}><span>{label}</span></Tip>
+        <span className="ml-auto flex gap-2">
+          {extra}
+          {kind === 'time' && total != null && <button type="button" className="text-[11px] text-ice hover:text-white" onClick={() => onChange(total)}>= flight</button>}
+        </span>
+      </div>
+      <input aria-label={label} className={cx('input mono', bad && 'ring-bad/60')} inputMode={kind === 'time' ? 'text' : 'numeric'} placeholder={kind === 'time' ? 'H:MM' : '0'} value={text}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={() => { const t = text.trim(); if (!t) return onChange(null); const v = kind === 'time' ? parseDurationInput(t) : /^\d{1,3}$/.test(t) ? Number(t) : null; if (v != null) onChange(v); }} />
+    </div>
+  );
+}
+
 export function FlightForm() {
   const form = useStore((s) => s.form);
   const close = useStore((s) => s.closeForm);
@@ -118,7 +140,8 @@ export function FlightForm() {
     setManualBlock(base.blockMinutesSource === 'manual' && base.blockMinutes != null ? fmtDuration(base.blockMinutes) : '');
     setTriedSave(false);
     setDirty(false);
-    setOpen((o) => ({ ...o, details: form.mode !== 'create' && !!(base.role || base.seat || base.crew || base.weather), story: form.mode !== 'create' && !!(base.notes || base.tags.length || base.photos.length) }));
+    const pilotish = settings.profile === 'pilot' || settings.profile === 'student' || ['pic', 'sic', 'dual', 'instructor'].includes(base.role) || hasPilotData(base);
+    setOpen((o) => ({ ...o, pilot: pilotish, details: pilotish || (form.mode !== 'create' && !!(base.role || base.seat || base.crew || base.weather)), story: form.mode !== 'create' && !!(base.notes || base.tags.length || base.photos.length) }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.open, form.flight, form.mode]);
 
@@ -407,6 +430,13 @@ export function FlightForm() {
             <Field label="Arrival" error={triedSave && !f.arr && f.status !== 'planned' && f.status !== 'draft' ? 'Required' : null}><AirportPicker label="Arrival airport" value={f.arr} onChange={(a) => upd({ arr: a })} invalid={triedSave && !f.arr} /></Field>
           </div>
           {errors.route && <p className="mt-2 text-[12px] text-warn">{errors.route}</p>}
+          {f.flightPlan && (
+            <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-live/[0.07] px-3 py-2 text-[12.5px] ring-1 ring-live/20">
+              <span className="text-live">Flight plan attached</span>
+              <span className="text-muted">{f.flightPlan.fixes.length} fixes{f.flightPlan.routeDistanceNm ? ` · ${fmt.dist(f.flightPlan.routeDistanceNm * 1.852)} planned` : ''}{f.flightPlan.alternate ? ` · ALTN ${f.flightPlan.alternate}` : ''}</span>
+              <button type="button" className="btn-ghost btn-sm ml-auto" onClick={() => upd({ flightPlan: undefined })}>Remove</button>
+            </div>
+          )}
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Field label="Planned route" htmlFor="ff-pr" className="sm:col-span-2"><input id="ff-pr" className="input-mono normal-case" placeholder="DCT ITLAN UL425 … (optional)" value={f.plannedRoute} onChange={(e) => upd({ plannedRoute: e.target.value.toUpperCase() })} /></Field>
             <Field label="Actual route" htmlFor="ff-ar" className="sm:col-span-2"><input id="ff-ar" className="input-mono" placeholder="If different from planned" value={f.actualRoute} onChange={(e) => upd({ actualRoute: e.target.value.toUpperCase() })} /></Field>
@@ -501,6 +531,23 @@ export function FlightForm() {
                 </>
               )}
             </div>
+          </div>
+        </Section>
+
+        <Section id="pilot" icon={GraduationCap} title="Pilot log" hint={hasPilotData(f) ? PILOT_FIELDS.filter((p) => f.pilot?.[p.key]).map((p) => `${p.label} ${p.kind === 'time' ? fmt.dur(f.pilot![p.key]) : f.pilot![p.key]}`).join(' · ') : 'PIC, dual, night, instrument, cross-country, approaches'} open={!!open.pilot} onToggle={() => setOpen({ ...open, pilot: !open.pilot })}>
+          <p className="mb-3 text-[12px] text-muted">For pilots and students. Use H:MM or decimal hours. Tap <span className="text-ice">= flight</span> to copy this flight's total time.{isSim ? ' Simulator time stays separate in every total.' : ''}</p>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            {PILOT_FIELDS.map((p) => (
+              <PilotField key={p.key} label={p.label} tip={p.tip} kind={p.kind} value={f.pilot?.[p.key] ?? null}
+                total={draft.flightMinutes ?? draft.blockMinutes}
+                onChange={(v) => upd({ pilot: { ...emptyPilot(), ...f.pilot, [p.key]: v } })}
+                extra={p.key === 'night' ? (
+                  <button type="button" className="text-[11px] text-ice hover:text-white disabled:text-faint" disabled={estimateNightMinutes(draft) == null}
+                    title="Estimate from the great-circle path and the sun's position (night = sun more than 6° below the horizon)"
+                    onClick={() => { const n = estimateNightMinutes(draft); if (n != null) { upd({ pilot: { ...emptyPilot(), ...f.pilot, night: n } }); toast({ kind: 'info', title: `Estimated ${fmt.dur(n)} of night`, body: 'Calculated from the route and the sun’s position. Adjust it if needed.' }); } }}>Estimate</button>
+                ) : undefined}
+              />
+            ))}
           </div>
         </Section>
 

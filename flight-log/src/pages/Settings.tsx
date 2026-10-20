@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { DateTime } from 'luxon';
-import { User, Ruler, Palette, Volume2, NotebookPen, LayoutDashboard, Shield, Plug, Database, Info, Cloud, CloudOff, LogOut, LogIn, RefreshCw, Trash2, Upload, Download, Gauge, ArrowUp, ArrowDown, Play, Settings2 } from 'lucide-react';
+import { User, Ruler, Palette, Volume2, NotebookPen, LayoutDashboard, Shield, Plug, Database, Info, Cloud, CloudOff, LogOut, LogIn, RefreshCw, Trash2, Upload, Download, Gauge, ArrowUp, ArrowDown, Play, Settings2, KeyRound } from 'lucide-react';
 import { useStore } from '../store/useStore';
-import { Field, Glass, PageHeader, Segmented, Toggle, ConfirmDialog, cx } from '../components/ui';
+import { Field, Glass, PageHeader, Segmented, Toggle, ConfirmDialog, Dialog, cx } from '../components/ui';
 import { Avatar } from '../components/layout/AppShell';
 import { AircraftTypePicker, AirportPicker } from '../components/flight/Pickers';
 import { CATEGORY_LABEL, PROFILE_LABEL, type FlightCategory, type FlyingProfile, type Settings } from '../lib/types';
@@ -16,11 +16,12 @@ import { CloudSetupDialog } from './Auth';
 
 const CARD_LABELS: Record<string, string> = { flights: 'Total flights', hours: 'Flight hours', block: 'Block hours', distance: 'Distance', aircraft: 'Aircraft types', airports: 'Airports', routes: 'Unique routes', airlines: 'Airlines', month: 'This month', average: 'Average flight', longest: 'Longest flight', topType: 'Most-flown aircraft' };
 const ALL_CARDS = Object.keys(CARD_LABELS);
+const CHART_LABELS: Record<string, string> = { monthlyHours: 'Monthly flight hours', flightsPerMonth: 'Flights per month', cumulative: 'Cumulative hours', byType: 'Flights by aircraft type', byAirline: 'Flights by airline', byCategory: 'Flights by category', topAirports: 'Most visited airports', domestic: 'Domestic vs international' };
 
 const SECTIONS = [
   { id: 'account', label: 'Account', icon: Cloud }, { id: 'profile', label: 'Profile', icon: User }, { id: 'units', label: 'Units & formats', icon: Ruler },
   { id: 'appearance', label: 'Appearance', icon: Palette }, { id: 'sound', label: 'Sound', icon: Volume2 }, { id: 'defaults', label: 'Logbook defaults', icon: NotebookPen },
-  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard }, { id: 'privacy', label: 'Privacy', icon: Shield }, { id: 'integrations', label: 'Integrations', icon: Plug },
+  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard }, { id: 'charts', label: 'Charts', icon: LayoutDashboard }, { id: 'privacy', label: 'Privacy', icon: Shield }, { id: 'integrations', label: 'Integrations', icon: Plug },
   { id: 'data', label: 'Data', icon: Database }, { id: 'about', label: 'About', icon: Info },
 ];
 
@@ -70,7 +71,8 @@ export default function SettingsPage() {
           <Section id="appearance" title="Appearance" icon={Palette}>
             <div className={row}>{rowLabel('Theme')}<Segmented label="Theme" size="sm" value={s.theme} onChange={(v) => set({ theme: v })} options={[{ value: 'midnight', label: 'Midnight' }, { value: 'twilight', label: 'Twilight' }]} /></div>
             <div className={row}>{rowLabel('Reduce transparency', 'Solid panels instead of glass. Easier to read, lighter on older devices.')}<Toggle checked={s.reduceTransparency} onChange={(v) => set({ reduceTransparency: v })} label="Reduce transparency" /></div>
-            <p className="pb-3 text-[12px] text-faint">Motion follows your system's “reduce motion” setting automatically.</p>
+            <InstallRow />
+            <p className="pb-3 text-[12px] text-faint">Motion follows your system's “reduce motion” setting automatically. Flight Log also works offline once it has loaded.</p>
           </Section>
 
           <Section id="sound" title="Sound" icon={Volume2}>
@@ -107,6 +109,14 @@ export default function SettingsPage() {
                 );
               })}
             </ul>
+          </Section>
+
+          <Section id="charts" title="Dashboard charts" icon={LayoutDashboard} note="Choose which charts appear under Activity on Overview.">
+            <div className="grid gap-x-6 py-2 sm:grid-cols-2">
+              {Object.entries(CHART_LABELS).map(([k, l]) => (
+                <label key={k} className="flex items-center justify-between gap-3 py-2.5 text-[13px]">{l}<Toggle checked={s.dashboardCharts.includes(k)} onChange={(v) => set({ dashboardCharts: v ? [...s.dashboardCharts, k] : s.dashboardCharts.filter((x) => x !== k) })} label={`Show ${l}`} /></label>
+              ))}
+            </div>
           </Section>
 
           <Section id="privacy" title="Privacy" icon={Shield}>
@@ -168,6 +178,9 @@ function AccountSection() {
   const toast = useStore((x) => x.toast);
   const [setup, setSetup] = useState(false);
   const [confirm, setConfirm] = useState(false);
+  const [pw, setPw] = useState(false);
+  const [pw1, setPw1] = useState('');
+  const [busyPw, setBusyPw] = useState(false);
   const cfg = cloud.cloudConfig();
   return (
     <Section id="account" title="Account & sync" icon={Cloud}>
@@ -177,6 +190,7 @@ function AccountSection() {
             <div className="grid h-10 w-10 place-items-center rounded-xl bg-good/15 text-good ring-1 ring-good/30"><Cloud className="h-5 w-5" /></div>
             <div className="min-w-0 flex-1"><div className="truncate text-[13.5px] font-medium">{auth.user?.email}</div><div className="text-[12px] text-muted">{sync.state === 'error' ? <span className="text-warn">{sync.error}</span> : sync.lastSync ? `Synced ${DateTime.fromISO(sync.lastSync).toRelative()}` : 'Connected'}</div></div>
             <button className="btn-glass btn-sm" onClick={syncNow} disabled={sync.state === 'syncing'}><RefreshCw className={cx('h-3.5 w-3.5', sync.state === 'syncing' && 'animate-spin')} />Sync now</button>
+            <button className="btn-glass btn-sm" onClick={() => setPw(true)}><KeyRound className="h-3.5 w-3.5" />Change password</button>
             <button className="btn-glass btn-sm" onClick={logout}><LogOut className="h-3.5 w-3.5" />Sign out</button>
           </div>
           <p className="py-3 text-[12px] text-muted">Your personal logbook and settings sync to your account. Photos and the demo workspace stay on each device. Signing out removes this device's copy; your account keeps everything.</p>
@@ -192,6 +206,9 @@ function AccountSection() {
         </div>
       )}
       <CloudSetupDialog open={setup} onOpenChange={setSetup} />
+      <Dialog open={pw} onOpenChange={(v) => { setPw(v); if (!v) setPw1(''); }} title="Change password" size="sm" footer={<button className="btn-primary" disabled={pw1.length < 8 || busyPw} onClick={async () => { setBusyPw(true); try { await cloud.updatePassword(pw1); setPw(false); setPw1(''); toast({ kind: 'success', title: 'Password changed' }); } catch (e) { toast({ kind: 'error', title: 'Could not change password', body: (e as Error).message }); } finally { setBusyPw(false); } }}>Save new password</button>}>
+        <input type="password" autoComplete="new-password" className="input h-11" placeholder="New password (at least 8 characters)" value={pw1} onChange={(e) => setPw1(e.target.value)} aria-label="New password" />
+      </Dialog>
     </Section>
   );
 }
@@ -279,5 +296,17 @@ function DataSection() {
       <ConfirmDialog open={confirm === 'demo'} onOpenChange={(v) => !v && setConfirm(null)} title="Reset the demo workspace?" confirmLabel="Reset" danger={false} body="Demo flights are regenerated from scratch. Your personal logbook isn't affected." onConfirm={async () => { await resetDemo(); toast({ kind: 'success', title: 'Demo reset' }); }} />
       {ws === 'demo' && <p className="pb-3 text-[12px] text-warn">You're in the demo workspace. Imports and edits here stay in the demo.</p>}
     </Section>
+  );
+}
+
+function InstallRow() {
+  const [can, setCan] = useState(!!(window as any).__installPrompt);
+  const standalone = typeof window !== 'undefined' && window.matchMedia?.('(display-mode: standalone)').matches;
+  useEffect(() => { const on = () => setCan(true); window.addEventListener('installable', on); return () => window.removeEventListener('installable', on); }, []);
+  return (
+    <div className="flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+      <div className="min-w-0"><div className="text-[13.5px] font-medium">Install as an app</div><div className="text-[12px] text-muted">{standalone ? 'Flight Log is installed on this device.' : can ? 'Adds Flight Log to your home screen or dock, opening in its own window.' : 'On iPhone/iPad: Share → Add to Home Screen. On desktop Chrome or Edge: the install icon in the address bar.'}</div></div>
+      {can && !standalone && <button className="btn-primary btn-sm" onClick={async () => { const p = (window as any).__installPrompt; if (!p) return; p.prompt(); await p.userChoice.catch(() => {}); (window as any).__installPrompt = null; setCan(false); }}>Install</button>}
+    </div>
   );
 }

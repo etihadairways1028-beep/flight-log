@@ -5,7 +5,8 @@ import { Glass, cx } from '../ui';
 export const SERIES = ['#5b9bff', '#5ee0ef', '#a9d4ff', '#34d399', '#f5b544', '#c4a7ff', '#f78fb3', '#8fa3c4'];
 export const AXIS = { stroke: 'transparent', tick: { fill: 'rgb(148 163 189)', fontSize: 11 }, tickLine: false, axisLine: false } as const;
 
-export function ChartCard({ title, eyebrow, action, children, className, footer, empty }: { title: React.ReactNode; eyebrow?: string; action?: React.ReactNode; children: React.ReactNode; className?: string; footer?: React.ReactNode; empty?: boolean }) {
+export function ChartCard({ title, eyebrow, action, children, className, footer, empty, hidden }: { title: React.ReactNode; eyebrow?: string; action?: React.ReactNode; children: React.ReactNode; className?: string; footer?: React.ReactNode; empty?: boolean; hidden?: boolean }) {
+  if (hidden) return null;
   return (
     <Glass className={cx('flex min-w-0 flex-col p-4 md:p-5', className)}>
       <div className="mb-4 flex items-start justify-between gap-3">
