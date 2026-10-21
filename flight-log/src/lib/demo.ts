@@ -11,6 +11,8 @@ import { haversineKm } from './geo';
 import { wallToUtc } from './time';
 import { estimateNightMinutes, isNight } from './pilot';
 import { emptyPilot } from './types';
+import type { TrackPoint } from './types';
+import { geoInterpolate } from 'd3-geo';
 
 function rng(seed: number) {
   return () => {
@@ -97,11 +99,44 @@ function build(dep: string, arr: string, date: string, r: () => number, cat: Fli
     const nightLanding = fin0.arr && fin0.times.landing ? isNight(new Date(fin0.times.landing), fin0.arr.lat!, fin0.arr.lon!) : false;
     f.pilot = { ...emptyPilot(), pic: fin0.flightMinutes, night: night || null, ifrSim: null };
     f.takeoffsDay = 1; f.landingsDay = nightLanding ? 0 : 1; f.landingsNight = nightLanding ? 1 : 0; f.takeoffsNight = 0;
+    // most demo sim sessions carry a (fictional) recorded track so replay can be explored
+    if (r() > 0.25) {
+      f.track = demoTrack(fin0, r);
+      f.landingRateFpm = -Math.round(70 + r() * 300);
+      f.recordedDistanceKm = Math.round(fin0.distanceKm! * (1.03 + r() * 0.05));
+      f.tags = [...(f.tags ?? []), 'recorded'];
+    }
   }
   f.notes = sim
     ? 'DEMO — fictional simulator session for exploring Flight Log.'
     : 'DEMO — fictional flight. Delete or reset the demo workspace any time from Settings.';
   return finalizeFlight(f);
+}
+
+/** A plausible, clearly fictional track: taxi, climb, cruise with gentle wander, descent, taxi. */
+function demoTrack(f: Flight, r: () => number): TrackPoint[] {
+  const a = f.dep!, b = f.arr!;
+  const t0 = Date.parse(f.times.offBlock!) / 1000, tTo = Date.parse(f.times.takeoff!) / 1000, tLd = Date.parse(f.times.landing!) / 1000, t1 = Date.parse(f.times.onBlock!) / 1000;
+  const ip = geoInterpolate([a.lon!, a.lat!], [b.lon!, b.lat!]);
+  const cruise = f.cruiseAltitudeFt ?? 30000, air = tLd - tTo;
+  const climb = Math.min(air * 0.3, (cruise / 2200) * 60), desc = Math.min(air * 0.35, (cruise / 1800) * 60);
+  const n = Math.min(240, Math.max(40, Math.round(air / 60)));
+  const ph = r() * 6, amp = Math.min(0.25, 0.02 + (air / 3600) * 0.04);
+  const pts: TrackPoint[] = [];
+  const cruiseGs = (f.distanceKm! / 1.852) / ((air - climb / 2 - desc / 2) / 3600);
+  pts.push({ t: Math.round(t0), lat: a.lat!, lon: a.lon!, altFt: 0, gsKt: 0 });
+  pts.push({ t: Math.round((t0 + tTo) / 2), lat: a.lat! + 0.004, lon: a.lon! + 0.004, altFt: 0, gsKt: 16 });
+  for (let i = 0; i <= n; i++) {
+    const u = i / n, t = tTo + u * air, el = t - tTo;
+    const [lon, lat] = ip(u);
+    const wob = Math.sin(u * Math.PI) * Math.sin(u * 9 + ph) * amp;
+    const alt = el < climb ? cruise * Math.sin((el / climb) * Math.PI / 2) : el > air - desc ? cruise * Math.sin(((air - el) / desc) * Math.PI / 2) : cruise;
+    const gs = el < climb ? 160 + (cruiseGs - 160) * (el / climb) : el > air - desc ? 140 + (cruiseGs - 140) * ((air - el) / desc) : cruiseGs + Math.sin(u * 13 + ph) * 12;
+    pts.push({ t: Math.round(t), lat: +(lat + wob).toFixed(5), lon: +(lon + wob * 0.6).toFixed(5), altFt: Math.round(Math.max(alt, 0)), gsKt: Math.round(gs) });
+  }
+  pts.push({ t: Math.round((tLd + t1) / 2), lat: b.lat! + 0.003, lon: b.lon! - 0.003, altFt: 0, gsKt: 14 });
+  pts.push({ t: Math.round(t1), lat: b.lat!, lon: b.lon!, altFt: 0, gsKt: 0 });
+  return pts;
 }
 
 export function generateDemoFlights(today = DateTime.local()): Flight[] {

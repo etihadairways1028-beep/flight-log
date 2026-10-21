@@ -1,14 +1,30 @@
 import { create } from 'zustand';
-import type { AppNotification, CustomAircraft, FilterPreset, Flight, IntegrationState, PhotoRecord, Settings, WorkspaceData, WorkspaceId } from '../lib/types';
+import type { Friend, AppNotification, CustomAircraft, FilterPreset, Flight, IntegrationState, PhotoRecord, Settings, WorkspaceData, WorkspaceId } from '../lib/types';
 import { localRepo as repo, requestPersistence } from './db';
 import { loadAirports, loadExtendedAirports, findAirport } from '../lib/airports';
 import { loadAirlines } from '../lib/airlines';
-import { finalizeFlight, uid } from '../lib/flight';
+import { finalizeFlight, uid, normalizeStoredFlight } from '../lib/flight';
 import { evaluateAchievements } from '../lib/achievements';
 import { generateDemoFlights } from '../lib/demo';
 import { configureSound, sound } from '../lib/sound';
 import * as cloud from '../lib/cloud';
 import { dupKey } from '../lib/flight';
+
+/** Bring workspace data from any app version (or another device) into the current shape. */
+function normalizeWorkspace(raw: any): WorkspaceData {
+  const base = emptyWorkspace();
+  if (!raw || typeof raw !== 'object') return base;
+  const arr = (v: any) => (Array.isArray(v) ? v : []);
+  return {
+    ...base, ...raw,
+    flights: arr(raw.flights).map(normalizeStoredFlight).filter(Boolean) as Flight[],
+    presets: arr(raw.presets), notifications: arr(raw.notifications).filter((n: any) => n && typeof n === 'object'),
+    achievementsSeen: arr(raw.achievementsSeen).filter((x: any) => typeof x === 'string'),
+    integrations: raw.integrations && typeof raw.integrations === 'object' ? raw.integrations : {},
+    customAircraft: arr(raw.customAircraft).filter((x: any) => x && typeof x === 'object'),
+    friends: arr(raw.friends).filter((x: any) => x && typeof x === 'object' && x.profile && typeof x.profile === 'object'),
+  };
+}
 
 export const DEFAULT_SETTINGS: Settings = {
   onboarded: false,
@@ -39,7 +55,30 @@ export const DEFAULT_SETTINGS: Settings = {
   simbriefUser: '',
   sounds: true,
   soundVolume: 0.5,
+  goals: { yearFlights: null, yearHours: null, monthFlights: null, yearNewAirports: null },
+  networkProvider: 'vatsim',
+  networkId: '',
+  profileHandle: '',
+  profileBio: '',
 };
+
+/** Merge stored settings over the defaults, dropping values of the wrong type (older versions, other devices). */
+function normalizeSettings(...parts: any[]): Settings {
+  const out: any = { ...DEFAULT_SETTINGS };
+  for (const p of parts) {
+    if (!p || typeof p !== 'object') continue;
+    for (const [k, v] of Object.entries(p)) {
+      const d = (DEFAULT_SETTINGS as any)[k];
+      if (v === undefined) continue;
+      if (d === null || d === undefined || (Array.isArray(d) ? Array.isArray(v) : typeof v === typeof d)) out[k] = v;
+    }
+  }
+  const g = out.goals && typeof out.goals === 'object' ? out.goals : {};
+  const num = (v: any) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null);
+  out.goals = { yearFlights: num(g.yearFlights), yearHours: num(g.yearHours), monthFlights: num(g.monthFlights), yearNewAirports: num(g.yearNewAirports) };
+  if (out.networkProvider !== 'ivao') out.networkProvider = 'vatsim';
+  return out as Settings;
+}
 
 const emptyWorkspace = (): WorkspaceData => ({ flights: [], presets: [], notifications: [], achievementsSeen: [], integrations: {}, customAircraft: [] });
 
@@ -80,6 +119,7 @@ interface State {
   markAllRead(): Promise<void>;
   clearNotifications(): Promise<void>;
   saveCustomAircraft(a: CustomAircraft): Promise<void>;
+  setFriends(mut: (f: Friend[]) => Friend[]): Promise<void>;
   deleteCustomAircraft(id: string): Promise<void>;
   setIntegration(id: string, patch: Partial<IntegrationState>): Promise<void>;
   resetDemo(): Promise<void>;
@@ -142,7 +182,7 @@ export const useStore = create<State>((setState, get) => {
 
   const loadWs = async (id: WorkspaceId): Promise<WorkspaceData> => {
     const raw = await repo.loadWorkspace(id);
-    let data = { ...emptyWorkspace(), ...(raw ?? {}) } as WorkspaceData;
+    let data = normalizeWorkspace(raw);
     if (id === 'demo' && !raw) {
       const flights = generateDemoFlights();
       data = { ...data, flights, achievementsSeen: evaluateAchievements(flights).filter((a) => a.unlocked).map((a) => a.def.id) };
@@ -157,7 +197,7 @@ export const useStore = create<State>((setState, get) => {
     try {
       const [rs, rw] = await Promise.all([cloud.pull<Partial<Settings>>(userId, 'settings'), cloud.pull<Partial<WorkspaceData>>(userId, 'ws:personal')]);
       if (rs) {
-        const settings = { ...DEFAULT_SETTINGS, ...get().settings, ...rs.value, onboarded: true };
+        const settings = normalizeSettings(get().settings, rs.value, { onboarded: true });
         configureSound(settings.sounds, settings.soundVolume);
         setState({ settings });
         await repo.saveSettings(settings);
@@ -165,8 +205,8 @@ export const useStore = create<State>((setState, get) => {
         await cloud.push(userId, 'settings', settingsForCloud(get().settings));
       }
       const local = ((await repo.loadWorkspace('personal')) ?? emptyWorkspace()) as WorkspaceData;
-      const localFull = { ...emptyWorkspace(), ...local };
-      const remote = rw ? ({ ...emptyWorkspace(), ...rw.value } as WorkspaceData) : null;
+      const localFull = normalizeWorkspace(local);
+      const remote = rw ? normalizeWorkspace(rw.value) : null;
       let syncedUser: string | null = null;
       try { syncedUser = localStorage.getItem('skylog:synced-user'); } catch { /* ignore */ }
       const localOwned = syncedUser === userId;
@@ -205,7 +245,7 @@ export const useStore = create<State>((setState, get) => {
       try {
         loadAirlines();
         const [s, ws] = await Promise.all([repo.loadSettings(), repo.getActiveWorkspace()]);
-        const settings = { ...DEFAULT_SETTINGS, ...(s ?? {}) };
+        const settings = normalizeSettings(s);
         configureSound(settings.sounds, settings.soundVolume);
         await loadAirports();
         setState({ airportsReady: true });
@@ -308,6 +348,10 @@ export const useStore = create<State>((setState, get) => {
     },
     async clearNotifications() {
       await setData((d) => ({ ...d, notifications: [] }));
+    },
+
+    async setFriends(mut) {
+      await setData((d) => ({ ...d, friends: mut(d.friends ?? []) }));
     },
 
     async saveCustomAircraft(a) {

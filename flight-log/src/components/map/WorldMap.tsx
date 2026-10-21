@@ -60,6 +60,7 @@ export interface WorldMapProps {
   fixes?: { ident: string; lon: number; lat: number }[];
   lines?: { pts: [number, number][]; color: string; dash?: string; width?: number }[];
   live?: { lat: number; lon: number; hdg: number } | null;
+  closeZoom?: boolean;           // allow zooming in to a few km (live tracking)
   onRoute?: (r: MapRoute, at: { x: number; y: number }) => void;
   onAirport?: (a: MapAirport, at: { x: number; y: number }) => void;
   onBackground?: () => void;
@@ -67,7 +68,7 @@ export interface WorldMapProps {
   children?: React.ReactNode;
 }
 
-export function WorldMap({ routes, airports, height = 420, center = 0, fit, interactive = true, wheelZoom = false, heat = false, selectedRoute, selectedAirport, showLabels = true, fixes, lines, live, onRoute, onAirport, onBackground, className, children }: WorldMapProps) {
+export function WorldMap({ routes, airports, height = 420, center = 0, fit, interactive = true, wheelZoom = false, heat = false, selectedRoute, selectedAirport, showLabels = true, fixes, lines, live, closeZoom, onRoute, onAirport, onBackground, className, children }: WorldMapProps) {
   const wrap = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const zoomRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null);
@@ -91,9 +92,9 @@ export function WorldMap({ routes, airports, height = 420, center = 0, fit, inte
       const fc = { type: 'FeatureCollection', features: [{ type: 'Feature', properties: {}, geometry: fit.length > 1 ? { type: 'LineString', coordinates: fit } : { type: 'Point', coordinates: fit[0] } }] } as any;
       const lo = fit.map((q) => q[0]), la = fit.map((q) => q[1]);
       const degenerate = fit.length === 1 || (Math.max(...lo) - Math.min(...lo) < 0.02 && Math.max(...la) - Math.min(...la) < 0.02);
-      if (degenerate) p.scale(size.w * (live ? 30 : 2.2)).translate([size.w / 2, size.h / 2]);
+      if (degenerate) p.scale(size.w * (closeZoom ? 30 : 2.2)).translate([size.w / 2, size.h / 2]);
       else p.fitExtent([[pad, pad], [size.w - pad, size.h - pad]], fc);
-      const zmax = live ? 30 : 2.2;
+      const zmax = closeZoom ? 30 : 2.2;
       if (degenerate || !Number.isFinite(p.scale()) || p.scale() > size.w * zmax * 1.8) {
         p.scale(Math.min(Number.isFinite(p.scale()) ? p.scale() : Infinity, size.w * zmax));
         const c = p(fit[0])!;
@@ -104,9 +105,10 @@ export function WorldMap({ routes, airports, height = 420, center = 0, fit, inte
       p.fitExtent([[8, 8], [size.w - 8, size.h - 8]], { type: 'Sphere' } as any);
     }
     return p;
-  }, [size.w, size.h, center, JSON.stringify(fit), !!live]);
+  }, [size.w, size.h, center, JSON.stringify(fit), !!closeZoom]);
 
   const path = useMemo(() => geoPath(projection), [projection]);
+  const base = useMemo(() => ({ sphere: path({ type: 'Sphere' } as any) ?? '', grat: path(graticule) ?? '', land: path(land) ?? '' }), [path]);
 
   useEffect(() => {
     const svg = svgRef.current;
@@ -164,9 +166,9 @@ export function WorldMap({ routes, airports, height = 420, center = 0, fit, inte
           <filter id="heatblur" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="14" /></filter>
         </defs>
         <g transform={`translate(${t.x},${t.y}) scale(${t.k})`}>
-          <path d={path({ type: 'Sphere' } as any) ?? ''} fill="url(#ocean)" stroke="rgb(255 255 255 / .08)" vectorEffect="non-scaling-stroke" data-bg="1" />
-          <path d={path(graticule) ?? ''} fill="none" stroke="rgb(255 255 255 / .035)" vectorEffect="non-scaling-stroke" pointerEvents="none" />
-          <path d={path(land) ?? ''} fill="#13244a" stroke="rgb(169 212 255 / .14)" strokeWidth={0.6} vectorEffect="non-scaling-stroke" data-bg="1" />
+          <path d={base.sphere} fill="url(#ocean)" stroke="rgb(255 255 255 / .08)" vectorEffect="non-scaling-stroke" data-bg="1" />
+          <path d={base.grat} fill="none" stroke="rgb(255 255 255 / .035)" vectorEffect="non-scaling-stroke" pointerEvents="none" />
+          <path d={base.land} fill="#13244a" stroke="rgb(169 212 255 / .14)" strokeWidth={0.6} vectorEffect="non-scaling-stroke" data-bg="1" />
           {heat && (
             <g filter="url(#heatblur)" pointerEvents="none" style={{ mixBlendMode: 'screen' }}>
               {airports.map((a) => {

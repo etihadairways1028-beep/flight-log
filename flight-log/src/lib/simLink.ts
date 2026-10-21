@@ -6,7 +6,7 @@ import { newRecording, step, type RecState, type Sample } from './recorder';
 
 export type LinkStatus = 'off' | 'connecting' | 'bridge' | 'live' | 'error';
 
-interface Hello { bridge: string; sim: string; test: boolean; canSavePlans: boolean }
+interface Hello { bridge: string; sim: string; test: boolean; canSavePlans: boolean; canNet: boolean }
 interface Telemetry extends Sample { sim: string; aircraft: string; test: boolean; title?: string }
 
 interface SimState {
@@ -21,6 +21,8 @@ interface SimState {
   connect(): void;
   disconnect(): void;
   sendPlan(name: string, content: string): Promise<{ ok: boolean; message: string; loaded?: boolean }>;
+  /** Ask the bridge to look up a VATSIM/IVAO pilot (the bridge isn't subject to browser CORS rules). */
+  netFetch(network: string, cid: string): Promise<{ ok: boolean; message?: string; pilot?: any; fetched?: number }>;
   startRecording(): void;
   resetRecording(): void;
 }
@@ -68,9 +70,10 @@ export const useSim = create<SimState>((set, get) => ({
     sock.onmessage = (ev) => {
       let m: any;
       try { m = JSON.parse(String(ev.data)); } catch { return; }
-      if (m.type === 'hello') set({ hello: { bridge: m.bridge, sim: m.sim, test: !!m.test, canSavePlans: !!m.canSavePlans } });
+      if (m.type === 'hello') set({ hello: { bridge: m.bridge, sim: m.sim, test: !!m.test, canSavePlans: !!m.canSavePlans, canNet: !!m.canNet } });
       else if (m.type === 'status') set({ status: 'bridge', message: m.message || 'Waiting for the simulator…' });
-      else if (m.type === 'planResult') { const cb = pending.get(m.id ?? -1) ?? [...pending.values()][0]; if (cb) { cb(m); pending.clear(); } }
+      else if (m.type === 'netResult') { const cb = pending.get(m.id); if (cb) { pending.delete(m.id); cb(m); } }
+      else if (m.type === 'planResult') { const id = pending.has(m.id) ? m.id : [...pending.keys()][0]; const cb = pending.get(id); if (cb) { pending.delete(id); cb(m); } }
       else if (m.type === 'telemetry') {
         const tel = m as Telemetry;
         const st = get();
@@ -109,6 +112,16 @@ export const useSim = create<SimState>((set, get) => ({
       pending.set(id, resolve);
       ws.send(JSON.stringify({ type: 'plan', id, name, content }));
       setTimeout(() => { if (pending.has(id)) { pending.delete(id); resolve({ ok: false, message: 'The bridge didn’t answer.' }); } }, 8000);
+    });
+  },
+
+  netFetch(network, cid) {
+    return new Promise((resolve) => {
+      if (!ws || ws.readyState !== WebSocket.OPEN || !get().hello?.canNet) return resolve({ ok: false, message: 'Bridge not connected.' });
+      const id = ++reqId;
+      pending.set(id, resolve);
+      ws.send(JSON.stringify({ type: 'net', id, network, cid }));
+      setTimeout(() => { if (pending.has(id)) { pending.delete(id); resolve({ ok: false, message: 'The bridge didn’t answer.' }); } }, 20000);
     });
   },
 

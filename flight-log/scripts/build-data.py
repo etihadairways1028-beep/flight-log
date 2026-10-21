@@ -67,3 +67,15 @@ for row in csv.reader(open(os.path.join(src, 'airlines.dat'), encoding='utf-8'))
     al.append([icao.upper(), iata.upper() if len(iata) == 2 else '', name.strip(), clean(callsign), clean(country)])
 json.dump(al, open(os.path.join(out, 'airlines.json'), 'w'), separators=(',', ':'), ensure_ascii=False)
 print(len(core), len(ext), len(al))
+
+# navaids (VOR, DME, NDB, TACAN) for resolving typed routes: [ident, type, name, lat, lon, freq]
+if os.path.exists(os.path.join(src, 'navaids.csv')):
+    T = {'VOR': 'VOR', 'VOR-DME': 'VOR', 'VORTAC': 'VOR', 'TACAN': 'TAC', 'DME': 'DME', 'NDB': 'NDB', 'NDB-DME': 'NDB'}
+    nav = []
+    for r in csv.DictReader(open(os.path.join(src, 'navaids.csv'), encoding='utf-8')):
+        try: la, lo = float(r['latitude_deg']), float(r['longitude_deg'])
+        except ValueError: continue
+        k = float(r['frequency_khz']) if r['frequency_khz'] else None
+        freq = '' if k is None else (f"{k / 1000:.2f}" if k >= 100000 else str(int(k)))
+        nav.append([r['ident'].strip().upper(), T.get(r['type'], r['type'][:3]), r['name'].strip()[:40], round(la, 4), round(lo, 4), freq])
+    json.dump(nav, open(os.path.join(out, 'navaids.json'), 'w'), separators=(',', ':'), ensure_ascii=False)

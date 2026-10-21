@@ -28,9 +28,22 @@ export async function fetchLatestOfp(username: string, opts: { asFlown?: boolean
 const asList = <T,>(v: T | T[] | undefined | null): T[] => (Array.isArray(v) ? v : v ? [v] : []);
 const numOr = (v: unknown): number | null => { const n = Number(v); return v !== '' && v != null && Number.isFinite(n) ? n : null; };
 
-/** Convert a SimBrief OFP (JSON) into a Flight with its full filed flight plan. */
-export function parseOfp(j: any, opts: { asFlown?: boolean } = {}): Flight {
+/** SimBrief's JSON turns empty XML elements into {} — make those empty strings so nothing renders "[object Object]" or crashes. */
+export function cleanOfp(v: any): any {
+  if (Array.isArray(v)) return v.map(cleanOfp);
+  if (v && typeof v === 'object') {
+    const keys = Object.keys(v);
+    if (!keys.length) return '';
+    const o: any = {};
+    for (const k of keys) o[k] = cleanOfp(v[k]);
+    return o;
+  }
+  return v;
+}
 
+/** Convert a SimBrief OFP (JSON) into a Flight with its full filed flight plan. */
+export function parseOfp(raw: any, opts: { asFlown?: boolean } = {}): Flight {
+  const j = cleanOfp(raw);
   const dep = findAirport(j.origin?.icao_code), arr = findAirport(j.destination?.icao_code);
   if (!dep || !arr) throw new Error(`Unknown airport in the OFP (${j.origin?.icao_code} → ${j.destination?.icao_code}).`);
   const f = emptyFlight({ defaultCategory: 'simulator' });

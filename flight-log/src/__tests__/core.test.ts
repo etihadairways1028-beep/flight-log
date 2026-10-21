@@ -408,3 +408,134 @@ describe('flight recorder', () => {
     expect(landingRating(-180)?.label).toBe('Smooth');
   });
 });
+
+import { normalizeStoredFlight, normalizePlan } from '../lib/flight';
+import { toKml, toGpx } from '../lib/planExport';
+describe('robustness', () => {
+  it('SimBrief empty elements ({}) never leak into the flight', () => {
+    const f = parseOfp({ general: { icao_airline: {}, flight_number: '470', route: {} }, atc: { callsign: {} }, origin: { icao_code: 'OMAA', metar: {}, plan_rwy: {} }, destination: { icao_code: 'WSSS', taf: {} }, aircraft: { icaocode: 'B789', reg: {} }, navlog: { fix: [] } });
+    expect(f.flightNumber).toBe('470');
+    expect(f.callsign).toBe('');
+    expect(f.aircraft.registration).toBe('');
+    expect(JSON.stringify(f)).not.toContain('[object Object]');
+  });
+  it('repairs records from older versions', () => {
+    const f = normalizeStoredFlight({ id: 'x', date: '2025-01-01', dep: null, arr: null, aircraft: null, times: null, tags: null, callsign: {}, flightPlan: { fixes: [{ ident: 'A', lat: '1', lon: '2' }, { ident: 'bad' }] } })!;
+    expect(f.id).toBe('x');
+    expect(f.times.offBlock).toBeNull();
+    expect(f.tags).toEqual([]);
+    expect(f.callsign).toBe('');
+    expect(f.flightPlan!.fixes).toHaveLength(1);
+    expect(f.flightPlan!.fuel.trip).toBeNull();
+    expect(normalizeStoredFlight({ id: 'y', date: 'bad' })!.id).toBe('y');
+    expect(normalizePlan(null)).toBeUndefined();
+  });
+  it('exports KML and GPX', () => {
+    const f = parseOfp({ origin: { icao_code: 'OMAA' }, destination: { icao_code: 'WSSS' }, aircraft: { icaocode: 'B789' }, navlog: { fix: [] } });
+    const kml = toKml([f]);
+    expect(kml).toContain('<kml');
+    expect(kml).toContain('<LineString>');
+    expect(kml).toContain('>AUH<');
+    expect(toGpx([f])).toContain('<trkpt lat="24.4');
+  });
+});
+
+import { streaks, goalProgress } from '../lib/stats';
+import { DateTime as LDT } from 'luxon';
+describe('goals and streaks', () => {
+  const mk = (date: string) => ({ ...emptyFlight(), date, status: 'completed', flightMinutes: 60 } as any);
+  it('counts month and week streaks', () => {
+    const now = LDT.fromISO('2026-10-21');
+    const s = streaks([mk('2026-08-03'), mk('2026-09-10'), mk('2026-10-02'), mk('2026-03-01'), mk('2026-04-01'), mk('2026-05-01'), mk('2026-06-01')], now);
+    expect(s.months).toBe(3);
+    expect(s.monthsBest).toBe(4);
+    expect(s.monthAtRisk).toBe(false);
+    const s2 = streaks([mk('2026-08-03'), mk('2026-09-10')], now);
+    expect(s2.months).toBe(2);
+    expect(s2.monthAtRisk).toBe(true);
+    expect(streaks([mk('2026-10-19'), mk('2026-10-14'), mk('2026-10-06')], now).weeks).toBe(3);
+  });
+  it('measures goal progress', () => {
+    const now = LDT.fromISO('2026-10-21');
+    const g = goalProgress([mk('2026-01-05'), mk('2026-10-01'), mk('2025-05-05')], { yearFlights: 10, yearHours: 5, monthFlights: null, yearNewAirports: null }, now);
+    expect(g).toHaveLength(2);
+    expect(g[0].value).toBe(2);
+    expect(g[1].value).toBe(2);
+  });
+});
+
+import { parseVatsimPilot, parseIvaoPilot, findPilot } from '../lib/network';
+import { cleanProfile, encodeProfile, decodeProfile } from '../pages/Friends';
+describe('online networks', () => {
+  it('parses VATSIM and IVAO pilots', () => {
+    const v = findPilot('vatsim', { pilots: [{ cid: 1234567, callsign: 'ETD123', name: 'A B', latitude: 24.4, longitude: 54.6, altitude: 37012, groundspeed: 480, heading: 95, transponder: '2200', last_updated: '2026-10-21T04:00:00Z',
+      flight_plan: { departure: 'omaa', arrival: 'WSSS', aircraft_short: 'B789', route: 'BUBIN UL425 PURNI', altitude: '37000', flight_rules: 'I' } }] }, '1234567')!;
+    expect(v.callsign).toBe('ETD123');
+    expect(v.dep).toBe('OMAA');
+    expect(v.cruise).toBe('FL370');
+    expect(v.aircraft).toBe('B789');
+    const i = parseIvaoPilot({ userId: 654321, callsign: 'IVA1', lastTrack: { latitude: 51.4, longitude: -0.4, altitude: 1200, groundSpeed: 160, heading: 270, timestamp: '2026-10-21T04:00:00Z' }, flightPlan: { departureId: 'EGLL', arrivalId: 'LFPG', level: 'F350', aircraft: { icaoCode: 'A320' } } })!;
+    expect(i.arr).toBe('LFPG');
+    expect(i.cruise).toBe('FL350');
+    expect(i.aircraft).toBe('A320');
+    expect(parseVatsimPilot({})).toBeNull();
+    expect(findPilot('vatsim', { pilots: [] }, '1')).toBeNull();
+  });
+});
+describe('public profiles', () => {
+  const p = { v: 1, name: 'Ana', handle: 'ana', bio: '<b>hi</b>', home: 'OMAA', updated: '2026-10-21', totals: { flights: 3, minutes: 600, km: 9000, airports: 3, countries: 2, types: 2, realFlights: 2, simFlights: 1 }, routes: [['OMAA', 'EGLL', 2], ['bad id!', 'X', 1]], topTypes: [['A388', 2]], topAirports: [['OMAA', 3]], firstDate: '2024-01-01', lastDate: '2026-10-01', badges: 4 };
+  it('validates untrusted profiles', () => {
+    const c = cleanProfile(p)!;
+    expect(c.routes).toHaveLength(1);
+    expect(cleanProfile({ v: 2 })).toBeNull();
+    expect(cleanProfile({ ...p, totals: { flights: -5 } })!.totals.flights).toBe(0);
+  });
+  it('round-trips a share code', async () => {
+    const code = await encodeProfile(cleanProfile(p)!);
+    expect(code.length).toBeLessThan(600);
+    expect((await decodeProfile(code))!.name).toBe('Ana');
+    expect(await decodeProfile('zgarbage')).toBeNull();
+  });
+});
+
+import { parseRouteString, parseRouteFile, parseLatLon, routeToPlan } from '../lib/planExport';
+describe('route import', () => {
+  it('reads coordinates in common formats', () => {
+    expect(parseLatLon('2530N05500E')).toEqual({ lat: 25.5, lon: 55 });
+    expect(parseLatLon('25N060E')).toEqual({ lat: 25, lon: 60 });
+    expect(parseLatLon('N25E055')).toEqual({ lat: 25, lon: 55 });
+    expect(parseLatLon('S3330W07000')!.lat).toBeCloseTo(-33.5);
+    expect(parseLatLon('BUBIN')).toBeNull();
+  });
+  it('parses a typed route', () => {
+    const r = parseRouteString('OMAA/31R BUBI1A BUBIN UL425 25N060E N0480F370 DCT 20N070E KITO1B WSSS/20C');
+    expect(r.depIdent).toBe('OMAA'); expect(r.depRwy).toBe('31R');
+    expect(r.arrIdent).toBe('WSSS'); expect(r.arrRwy).toBe('20C');
+    expect(r.sid).toBe('BUBI1A'); expect(r.star).toBe('KITO1B');
+    expect(r.cruiseFt).toBe(37000);
+    expect(r.fixes.map((x) => x.ident)).toEqual(['25N060E', '20N070E']);
+    expect(r.fixes[0].airway).toBe('UL425');
+    expect(r.unresolved).toContain('BUBIN');
+  });
+  it('reads MSFS .pln and X-Plane .fms files back', () => {
+    const f = parseOfp({ general: { route: 'BUBI1A BUBIN UL425 PURNI' }, origin: { icao_code: 'OMAA', plan_rwy: '31R' }, destination: { icao_code: 'WSSS', plan_rwy: '20C' }, aircraft: { icaocode: 'B789' },
+      navlog: { fix: [{ ident: 'BUBIN', type: 'wpt', pos_lat: '24.9', pos_long: '55.3', via_airway: 'BUBI1A', is_sid_star: '1' }, { ident: 'PURNI', type: 'wpt', pos_lat: '22.0', pos_long: '62.0', via_airway: 'UL425', is_sid_star: '0' }] } });
+    const a = parseRouteFile('x.pln', toMsfsPln(f));
+    expect(a.depIdent).toBe('OMAA'); expect(a.arrIdent).toBe('WSSS');
+    expect(a.fixes.map((x) => x.ident)).toContain('PURNI');     // SID/STAR fixes are left to the sim's procedure in .pln
+    expect(a.fixes.find((x) => x.ident === 'PURNI')!.lat).toBeCloseTo(22, 3);
+    const b = parseRouteFile('x.fms', toXplaneFms(f));
+    expect(b.fixes.map((x) => x.ident)).toEqual(['PURNI']);
+    expect(b.sid).toBe('BUBI1A');
+    const plan = routeToPlan(b, f.dep, f.arr);
+    expect(plan.fixes[0].cumNm).toBeGreaterThan(300);
+    expect(plan.routeDistanceNm).toBeGreaterThan(2500);
+  });
+  it('imports a GPX track as the flown path', () => {
+    const gpx = `<?xml version="1.0"?><gpx version="1.1"><trk><trkseg><trkpt lat="24.43" lon="54.65"><ele>30</ele><time>2026-01-01T10:00:00Z</time></trkpt><trkpt lat="24.6" lon="54.9"><ele>3000</ele><time>2026-01-01T10:05:00Z</time></trkpt><trkpt lat="25.2" lon="55.3"><ele>20</ele><time>2026-01-01T10:20:00Z</time></trkpt></trkseg></trk></gpx>`;
+    const r = parseRouteFile('t.gpx', gpx);
+    expect(r.track).toHaveLength(3);
+    expect(r.track![1].altFt).toBe(9843);
+    expect(r.track![1].gsKt).toBeGreaterThan(100);
+  });
+});

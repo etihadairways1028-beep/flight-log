@@ -1,5 +1,6 @@
-import React, { Suspense, lazy, useEffect } from 'react';
-import { Route, Routes } from 'react-router-dom';
+import React, { Suspense, useEffect } from 'react';
+import { Route, Routes, useLocation } from 'react-router-dom';
+import { ErrorBoundary, lazyPage } from './components/ErrorBoundary';
 import { useStore } from './store/useStore';
 import { AppShell, Logo } from './components/layout/AppShell';
 import { FlightForm } from './components/flight/FlightForm';
@@ -8,20 +9,22 @@ import Overview from './pages/Overview';
 import Onboarding from './pages/Onboarding';
 import AuthScreen, { AccountDialogs } from './pages/Auth';
 
-const Flights = lazy(() => import('./pages/Flights'));
-const FlightDetail = lazy(() => import('./pages/FlightDetail'));
-const Analytics = lazy(() => import('./pages/Analytics'));
-const MapPage = lazy(() => import('./pages/MapPage'));
-const Live = lazy(() => import('./pages/Live'));
-const Aircraft = lazy(() => import('./pages/Aircraft'));
-const AircraftDetail = lazy(() => import('./pages/AircraftDetail'));
-const Airports = lazy(() => import('./pages/Airports'));
-const AirportDetail = lazy(() => import('./pages/AirportDetail'));
-const CalendarPage = lazy(() => import('./pages/Calendar'));
-const Achievements = lazy(() => import('./pages/Achievements'));
-const Reports = lazy(() => import('./pages/Reports'));
-const SettingsPage = lazy(() => import('./pages/Settings'));
-const NotFound = lazy(() => import('./pages/NotFound'));
+const Flights = lazyPage(() => import('./pages/Flights'));
+const FlightDetail = lazyPage(() => import('./pages/FlightDetail'));
+const Analytics = lazyPage(() => import('./pages/Analytics'));
+const MapPage = lazyPage(() => import('./pages/MapPage'));
+const Live = lazyPage(() => import('./pages/Live'));
+const Friends = lazyPage(() => import('./pages/Friends'));
+const ProfileLink = lazyPage(() => import('./pages/Friends').then((m) => ({ default: m.ProfileLinkPage })));
+const Aircraft = lazyPage(() => import('./pages/Aircraft'));
+const AircraftDetail = lazyPage(() => import('./pages/AircraftDetail'));
+const Airports = lazyPage(() => import('./pages/Airports'));
+const AirportDetail = lazyPage(() => import('./pages/AirportDetail'));
+const CalendarPage = lazyPage(() => import('./pages/Calendar'));
+const Achievements = lazyPage(() => import('./pages/Achievements'));
+const Reports = lazyPage(() => import('./pages/Reports'));
+const SettingsPage = lazyPage(() => import('./pages/Settings'));
+const NotFound = lazyPage(() => import('./pages/NotFound'));
 
 function PageSkeleton() {
   return (
@@ -57,6 +60,11 @@ function Boot() {
   );
 }
 
+function RouteBoundary({ children }: { children: React.ReactNode }) {
+  const loc = useLocation();
+  return <ErrorBoundary resetKey={loc.pathname}>{children}</ErrorBoundary>;
+}
+
 export default function App() {
   const ready = useStore((s) => s.ready);
   const init = useStore((s) => s.init);
@@ -75,6 +83,7 @@ export default function App() {
   if (!onboarded) return <><Onboarding /><AccountDialogs /></>;
   return (
     <AppShell>
+      <RouteBoundary>
       <Suspense fallback={<PageSkeleton />}>
         <Routes>
           <Route path="/" element={<Overview />} />
@@ -83,6 +92,9 @@ export default function App() {
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/map" element={<MapPage />} />
           <Route path="/live" element={<Live />} />
+          <Route path="/friends" element={<Friends />} />
+          <Route path="/u/:code" element={<ProfileLink />} />
+          <Route path="/p/:handle" element={<ProfileLink />} />
           <Route path="/aircraft" element={<Aircraft />} />
           <Route path="/aircraft/:key" element={<AircraftDetail />} />
           <Route path="/airports" element={<Airports />} />
@@ -94,7 +106,8 @@ export default function App() {
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Suspense>
-      <FlightForm />
+      </RouteBoundary>
+      <ErrorBoundary compact><FlightForm /></ErrorBoundary>
       <AccountDialogs />
     </AppShell>
   );

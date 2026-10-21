@@ -24,6 +24,7 @@ Usage
 from __future__ import annotations
 
 import argparse
+import urllib.request
 import asyncio
 import json
 import math
@@ -301,7 +302,7 @@ async def main(args) -> None:
 
     def hello():
         return json.dumps({"type": "hello", "bridge": VERSION, "sim": getattr(source, "name", "?"), "test": isinstance(source, TestSource),
-                           "canSavePlans": source.plans_dir() is not None})
+                           "canSavePlans": source.plans_dir() is not None, "canNet": True})
 
     extra = {o.rstrip("/").lower() for o in (args.allow_origin or [])}
 
@@ -321,6 +322,10 @@ async def main(args) -> None:
                     continue
                 if msg.get("type") == "plan":
                     await ws.send(json.dumps(save_plan(source, msg)))
+                elif msg.get("type") == "net":
+                    res = await asyncio.to_thread(network_lookup, str(msg.get("network", "")), str(msg.get("cid", "")))
+                    res.update({"type": "netResult", "id": msg.get("id")})
+                    await ws.send(json.dumps(res))
         finally:
             clients.discard(ws)
 
@@ -355,6 +360,34 @@ async def main(args) -> None:
             await broadcast()
         finally:
             source.close()
+
+
+# ─── VATSIM / IVAO lookup (the website may not be allowed to read these feeds directly) ──
+NET_FEEDS = {"vatsim": "https://data.vatsim.net/v3/vatsim-data.json", "ivao": "https://api.ivao.aero/v2/tracker/whazzup"}
+_net_cache: dict = {}
+
+
+def network_lookup(network: str, cid: str) -> dict:
+    url = NET_FEEDS.get(network)
+    if not url or not re.fullmatch(r"\d{3,9}", cid):
+        return {"ok": False, "message": "Unknown network or invalid ID."}
+    now = time.time()
+    cached = _net_cache.get(network)
+    if not cached or now - cached[0] > 15:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": f"FlightLogBridge/{VERSION}", "Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=12) as r:
+                cached = (now, json.loads(r.read().decode("utf-8")))
+            _net_cache[network] = cached
+        except Exception as e:
+            return {"ok": False, "message": f"Could not reach {network.upper()}: {e}"}
+    data = cached[1]
+    pilots = data.get("pilots") if network == "vatsim" else (data.get("clients") or {}).get("pilots")
+    for p in pilots or []:
+        pid = p.get("cid") if network == "vatsim" else p.get("userId")
+        if str(pid) == cid:
+            return {"ok": True, "pilot": p, "fetched": cached[0]}
+    return {"ok": True, "pilot": None, "fetched": cached[0]}
 
 
 def save_plan(source, msg: dict) -> dict:

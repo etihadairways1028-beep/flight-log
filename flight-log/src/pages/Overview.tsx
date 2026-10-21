@@ -2,10 +2,10 @@ import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { DateTime } from 'luxon';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, AreaChart, Area } from 'recharts';
-import { Shuffle, Plus, Upload, ArrowUpRight, TrendingUp, TrendingDown, Lightbulb, Plane, Clock, Route, MapPin, Building2, CalendarRange, Timer, Trophy, Ruler, Gauge, Layers, Globe2, ChevronRight } from 'lucide-react';
+import { Target, Shuffle, Plus, Upload, ArrowUpRight, TrendingUp, TrendingDown, Lightbulb, Plane, Clock, Route, MapPin, Building2, CalendarRange, Timer, Trophy, Ruler, Gauge, Layers, Globe2, ChevronRight } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { useFmt } from '../lib/useFmt';
-import { summarize, monthly, groupBy, airportVisits, domesticSplit, sortByDateDesc } from '../lib/stats';
+import { summarize, monthly, groupBy, airportVisits, domesticSplit, sortByDateDesc, streaks, goalProgress } from '../lib/stats';
 import { generateInsights } from '../lib/insights';
 import { aircraftLabel, aircraftShort, isCounted, typeKey } from '../lib/flight';
 import { CATEGORY_LABEL, PROFILE_LABEL, type FlightCategory } from '../lib/types';
@@ -125,6 +125,7 @@ export default function Overview() {
       </section>
 
       <QuickLogBar latest={latest} />
+      <GoalsCard />
       {(s.profile === 'pilot' || s.profile === 'student') && <RecencyCards flights={flights} compact />}
 
       {/* Key statistics */}
@@ -291,6 +292,61 @@ export default function Overview() {
         <p className="text-[11.5px] text-faint">Flight Log is a personal flight record and is not an approved regulatory pilot logbook.</p>
       )}
     </div>
+  );
+}
+
+function Ring({ pct, size = 64, tone = '#5b9bff' }: { pct: number; size?: number; tone?: string }) {
+  const r = size / 2 - 5, c = 2 * Math.PI * r, p = Math.max(0, Math.min(1, pct));
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90 shrink-0" aria-hidden>
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgb(255 255 255 / .08)" strokeWidth={6} />
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={tone} strokeWidth={6} strokeLinecap="round" strokeDasharray={`${c * p} ${c}`} style={{ transition: 'stroke-dasharray .8s cubic-bezier(.2,.8,.2,1)' }} />
+    </svg>
+  );
+}
+
+function GoalsCard() {
+  const flights = useStore((x) => x.data.flights);
+  const goals = useStore((x) => x.settings.goals);
+  const st = useMemo(() => streaks(flights), [flights]);
+  const gp = useMemo(() => goalProgress(flights, goals), [flights, goals]);
+  const fmtV = (v: number, u: string) => (u === 'hours' ? v.toFixed(1) : String(Math.round(v)));
+  return (
+    <section aria-label="Goals and streaks" className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+      <div className="glass flex items-center gap-4 rounded-xl2 p-4">
+        <div className={cx('grid h-14 w-14 shrink-0 place-items-center rounded-2xl text-[24px] ring-1', st.months ? 'bg-warn/15 ring-warn/30' : 'bg-white/[0.04] ring-white/10')} aria-hidden>{st.months ? '🔥' : '✈️'}</div>
+        <div className="min-w-0 flex-1">
+          <div className="label">Streak</div>
+          <div className="text-[20px] font-semibold leading-tight">{st.months} month{st.months === 1 ? '' : 's'} <span className="text-[13px] font-normal text-muted">· {st.weeks} week{st.weeks === 1 ? '' : 's'}</span></div>
+          <div className="text-[12px] text-muted">{st.monthAtRisk ? 'Log a flight this month to keep it going.' : st.months ? `Best: ${st.monthsBest} months in a row` : 'Fly in consecutive months to build a streak.'}</div>
+        </div>
+      </div>
+      <div className="glass rounded-xl2 p-4">
+        {gp.length ? (
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(170px,1fr))] gap-3">
+            {gp.map((g) => {
+              const pct = g.value / g.target, done = pct >= 1, onPace = (g.pace ?? 0) >= g.target;
+              return (
+                <div key={g.key} className="flex items-center gap-3">
+                  <div className="relative"><Ring pct={pct} tone={done ? '#34d399' : onPace ? '#5b9bff' : '#f5b544'} /><span className="mono absolute inset-0 grid place-items-center text-[12px] font-semibold">{Math.min(999, Math.round(pct * 100))}%</span></div>
+                  <div className="min-w-0">
+                    <div className="truncate text-[12px] text-muted">{g.label}</div>
+                    <div className="mono whitespace-nowrap text-[15px] font-semibold">{fmtV(g.value, g.unit)}<span className="text-faint"> / {g.target}</span></div>
+                    <div className={cx('text-[11px]', done ? 'text-good' : onPace ? 'text-ice' : 'text-warn')}>{done ? 'Goal reached' : onPace ? 'On pace' : `Pace: ${fmtV(g.pace ?? 0, g.unit)}`}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="flex h-full flex-wrap items-center gap-3">
+            <Target className="h-5 w-5 text-ice" />
+            <div className="min-w-0 flex-1"><div className="text-[14px] font-medium">Set yourself a goal</div><div className="text-[12.5px] text-muted">Flights or hours this year, flights this month, new airports. Progress rings show whether you're on pace.</div></div>
+            <Link to="/settings?section=goals" className="btn-glass btn-sm">Set goals</Link>
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 

@@ -4,6 +4,7 @@ import { HashRouter } from 'react-router-dom';
 import { MotionConfig } from 'framer-motion';
 import * as RTooltip from '@radix-ui/react-tooltip';
 import App from './App';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import './index.css';
 
 // HashRouter: deep links work on GitHub Pages without server rewrites.
@@ -12,7 +13,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <HashRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <MotionConfig reducedMotion="user">
         <RTooltip.Provider delayDuration={200}>
-          <App />
+          <ErrorBoundary><App /></ErrorBoundary>
         </RTooltip.Provider>
       </MotionConfig>
     </HashRouter>

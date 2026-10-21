@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
-import { GraduationCap, ChevronDown, Clock, Plane, Route as RouteIcon, NotebookPen, Users, Info, AlertTriangle, ImagePlus, Trash2, ArrowLeftRight, Sparkles, Globe2 } from 'lucide-react';
+import { Upload, MapPin, GraduationCap, ChevronDown, Clock, Plane, Route as RouteIcon, NotebookPen, Users, Info, AlertTriangle, ImagePlus, Trash2, ArrowLeftRight, Sparkles, Globe2 } from 'lucide-react';
 import { useStore } from '../../store/useStore';
 import { Dialog, Field, Segmented, Stars, Tip, cx } from '../ui';
 import { AirportPicker, AircraftTypePicker, AirlineInput } from './Pickers';
@@ -11,7 +11,9 @@ import { CATEGORY_LABEL, ROLE_LABEL, STATUS_LABEL, PILOT_FIELDS, emptyPilot } fr
 import { estimateNightMinutes } from '../../lib/pilot';
 import { hasPilotData } from '../../lib/flight';
 import { deriveDurations, fmtDurationLong, isValidISODate, minutesBetween, parseDurationInput, timingIssues, utcToWall, wallToUtc, zoneOffsetLabel, fmtDuration } from '../../lib/time';
-import { distanceBetween } from '../../lib/geo';
+import { distanceBetween, haversineKm } from '../../lib/geo';
+import { loadNavaids, navaidsReady, parseRouteFile, parseRouteString, routeToPlan, type RouteImport } from '../../lib/planExport';
+import { WorldMap } from '../map/WorldMap';
 import { useFmt } from '../../lib/useFmt';
 import { toFt, ftTo, toKt, ktTo, toKm, kmTo, ALT_LABEL, SPEED_LABEL, DIST_LABEL } from '../../lib/units';
 import { sound } from '../../lib/sound';
@@ -275,6 +277,8 @@ export function FlightForm() {
   const blocking = !!errors.date || !!errors.manualFlight || !!errors.manualBlock || issues.length > 0 || ((f.status === 'completed' || f.status === 'diverted') && (!f.dep || !f.arr));
 
   const upd = (p: Partial<Flight>) => { setF((x) => ({ ...x, ...p })); setDirty(true); };
+  /** Like upd, but keeps the time inputs in step when times are part of the patch (route/track imports). */
+  const updRoute = (p: Partial<Flight>) => { setF((x) => { const n = { ...x, ...p }; if (p.times) setWalls(wallsFrom(n, zoneMode)); return n; }); setDirty(true); if (p.times) setOpen((o) => ({ ...o, timing: true })); };
   const updAc = (p: Partial<Flight['aircraft']>) => { setF((x) => ({ ...x, aircraft: { ...x.aircraft, ...p } })); setDirty(true); };
   const setWall = (k: TimeKey, p: Partial<Wall>) => { setWalls((w) => ({ ...w, [k]: { ...w[k], ...p } })); setDirty(true); };
 
@@ -430,15 +434,8 @@ export function FlightForm() {
             <Field label="Arrival" error={triedSave && !f.arr && f.status !== 'planned' && f.status !== 'draft' ? 'Required' : null}><AirportPicker label="Arrival airport" value={f.arr} onChange={(a) => upd({ arr: a })} invalid={triedSave && !f.arr} /></Field>
           </div>
           {errors.route && <p className="mt-2 text-[12px] text-warn">{errors.route}</p>}
-          {f.flightPlan && (
-            <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-live/[0.07] px-3 py-2 text-[12.5px] ring-1 ring-live/20">
-              <span className="text-live">Flight plan attached</span>
-              <span className="text-muted">{f.flightPlan.fixes.length} fixes{f.flightPlan.routeDistanceNm ? ` · ${fmt.dist(f.flightPlan.routeDistanceNm * 1.852)} planned` : ''}{f.flightPlan.alternate ? ` · ALTN ${f.flightPlan.alternate}` : ''}</span>
-              <button type="button" className="btn-ghost btn-sm ml-auto" onClick={() => upd({ flightPlan: undefined })}>Remove</button>
-            </div>
-          )}
+          <RoutePanel f={f} upd={updRoute} />
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field label="Planned route" htmlFor="ff-pr" className="sm:col-span-2"><input id="ff-pr" className="input-mono normal-case" placeholder="DCT ITLAN UL425 … (optional)" value={f.plannedRoute} onChange={(e) => upd({ plannedRoute: e.target.value.toUpperCase() })} /></Field>
             <Field label="Actual route" htmlFor="ff-ar" className="sm:col-span-2"><input id="ff-ar" className="input-mono" placeholder="If different from planned" value={f.actualRoute} onChange={(e) => upd({ actualRoute: e.target.value.toUpperCase() })} /></Field>
             <Field label={`Recorded distance (${DIST_LABEL[settings.distanceUnit]})`} htmlFor="ff-rd" tip="Distance actually flown, from a tracker or simulator. The great-circle distance is always calculated from the airports.">
               <input id="ff-rd" className="input mono" inputMode="decimal" value={f.recordedDistanceKm != null ? String(Math.round(kmTo(f.recordedDistanceKm, settings.distanceUnit))) : ''} onChange={(e) => { const n = numOrNull(e.target.value); upd({ recordedDistanceKm: n == null ? null : toKm(n, settings.distanceUnit) }); }} placeholder={draft.distanceKm ? `GC ${fmt.distNum(draft.distanceKm)}` : ''} />
@@ -612,5 +609,100 @@ export function FlightForm() {
         <button type="submit" className="hidden" aria-hidden="true" tabIndex={-1} />
       </form>
     </Dialog>
+  );
+}
+
+// ─── Route & waypoints ──────────────────────────────────────────────────────
+function RoutePanel({ f, upd }: { f: Flight; upd: (p: Partial<Flight>) => void }) {
+  const fmt = useFmt();
+  const toast = useStore((s) => s.toast);
+  const fp = f.flightPlan;
+  const [text, setText] = useState(fp?.fullRoute || f.plannedRoute || '');
+  const [ready, setReady] = useState(navaidsReady());
+  const fileRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { loadNavaids().then(() => setReady(true)); }, []);
+  useEffect(() => { setText(fp?.fullRoute || f.plannedRoute || ''); }, [f.id, fp?.requestId, fp?.route, fp?.source]);
+
+  function apply(r: RouteImport) {
+    const dep = f.dep ?? (r.depIdent && findAirport(r.depIdent) ? toRef(findAirport(r.depIdent)!) : null);
+    const arr = f.arr ?? (r.arrIdent && findAirport(r.arrIdent) ? toRef(findAirport(r.arrIdent)!) : null);
+    const patch: Partial<Flight> = { dep, arr };
+    if (r.track) {
+      patch.track = r.track;
+      let km = 0; for (let i = 1; i < r.track.length; i++) km += haversineKm(r.track[i - 1].lat, r.track[i - 1].lon, r.track[i].lat, r.track[i].lon);
+      if (km > 1) patch.recordedDistanceKm = Math.round(km);
+      if (!f.cruiseAltitudeFt) { const mx = Math.max(...r.track.map((p) => p.altFt ?? 0)); if (mx > 1000) patch.cruiseAltitudeFt = Math.round(mx / 100) * 100; }
+      // timestamps in the file → fill empty gate and air times
+      const tr = r.track, timed = /flown path/.test(r.label) && tr[tr.length - 1].t > tr[0].t;
+      if (timed && !f.times.offBlock && !f.times.takeoff && !f.times.landing && !f.times.onBlock) {
+        const g0 = tr[0].altFt ?? 0, gN = tr[tr.length - 1].altFt ?? 0;
+        const up = tr.findIndex((p) => (p.altFt ?? 0) > g0 + 300 || p.gsKt > 70);
+        let dn = -1; for (let i = tr.length - 1; i >= 0; i--) if ((tr[i].altFt ?? 0) > gN + 300 || tr[i].gsKt > 70) { dn = i; break; }
+        const iso = (t: number) => new Date(t * 1000).toISOString().replace('.000Z', 'Z');
+        patch.times = { ...f.times, offBlock: iso(tr[0].t), onBlock: iso(tr[tr.length - 1].t), takeoff: up > 0 ? iso(tr[up].t) : null, landing: dn > 0 && dn < tr.length - 1 ? iso(tr[dn].t) : null };
+        if (!f.date || f.date === emptyFlight().date) patch.date = new Date(tr[0].t * 1000).toISOString().slice(0, 10);
+      }
+    }
+    if (r.fixes.length || r.route) {
+      patch.flightPlan = routeToPlan(r, dep, arr, fp);
+      patch.plannedRoute = r.route;
+      if (r.cruiseFt && !f.cruiseAltitudeFt) { patch.cruiseAltitudeFt = r.cruiseFt; patch.flightLevel = `FL${Math.round(r.cruiseFt / 100)}`; }
+    }
+    upd(patch);
+    sound.tap();
+    toast({ kind: 'success', title: r.track ? 'Flown track added' : `${r.fixes.length} waypoint${r.fixes.length === 1 ? '' : 's'} placed`, body: [r.label, r.unresolved.length ? `${r.unresolved.length} without known coordinates: ${r.unresolved.slice(0, 6).join(' ')}${r.unresolved.length > 6 ? '…' : ''}` : ''].filter(Boolean).join(' · ') });
+  }
+  async function onFile(file: File | undefined) {
+    if (!file) return;
+    try { if (file.size > 8_000_000) throw new Error('That file is too large.'); apply(parseRouteFile(file.name, await file.text())); }
+    catch (e) { toast({ kind: 'error', title: 'Couldn’t read the route file', body: (e as Error).message }); }
+    if (fileRef.current) fileRef.current.value = '';
+  }
+  const planPts: [number, number][] = [];
+  if (f.dep?.lon != null) planPts.push([f.dep.lon, f.dep.lat!]);
+  for (const x of fp?.fixes ?? []) if (x.ident !== f.dep?.ident && x.ident !== f.arr?.ident) planPts.push([x.lon, x.lat]);
+  if (f.arr?.lon != null) planPts.push([f.arr.lon, f.arr.lat!]);
+  const trackPts = (f.track ?? []).map((p) => [p.lon, p.lat] as [number, number]);
+  const showMap = (fp?.fixes.length ?? 0) > 0 || trackPts.length > 1;
+  const aps = [f.dep, f.arr].filter((a): a is NonNullable<typeof a> => !!a && a.lat != null).map((a) => ({ ident: a.ident, label: a.iata || a.ident, name: a.name, lon: a.lon!, lat: a.lat!, visits: 1 }));
+  const srcLabel = fp ? (fp.source === 'simbrief' ? 'SimBrief OFP' : fp.label || (fp.source === 'file' ? 'Route file' : 'Typed route')) : null;
+
+  return (
+    <div className="mt-3 rounded-xl bg-white/[0.025] p-3 ring-1 ring-white/[0.06]">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <span className="text-[13px] font-medium">Route & waypoints</span>
+        {srcLabel && <span className="chip text-live ring-live/25">{srcLabel}</span>}
+        {fp?.sid && <span className="chip mono">SID {fp.sid}</span>}
+        {fp?.star && <span className="chip mono">STAR {fp.star}</span>}
+        <div className="ml-auto flex gap-1.5">
+          <button type="button" className="btn-glass btn-sm" onClick={() => fileRef.current?.click()}><Upload className="h-3.5 w-3.5" />Import file</button>
+          {fp && <button type="button" className="btn-ghost btn-sm" onClick={() => { upd({ flightPlan: undefined }); setText(''); }}>Clear route</button>}
+        </div>
+        <input ref={fileRef} type="file" className="hidden" accept=".pln,.fms,.gpx,.kml,.txt,.xml" onChange={(e) => onFile(e.target.files?.[0])} />
+      </div>
+      <div className="flex gap-2">
+        <textarea className="input-mono min-h-[64px] flex-1 resize-y normal-case" rows={2} aria-label="Route" placeholder="OMAA/31R DCT VTK UL425 PURNI 25N060E WSSS — airports, VORs/NDBs and coordinates are placed on the map" value={text} onChange={(e) => setText(e.target.value.toUpperCase())} />
+        <button type="button" className="btn-primary self-start" disabled={!text.trim() || !ready} onClick={() => apply(parseRouteString(text, f.dep, f.arr))}><MapPin className="h-4 w-4" />Place</button>
+      </div>
+      {showMap && (
+        <div className="mt-3 overflow-hidden rounded-xl ring-1 ring-white/[0.06]">
+          <WorldMap routes={[]} airports={aps} height={230} fit={[...planPts, ...trackPts]} showLabels interactive
+            fixes={(fp?.fixes ?? []).filter((x) => x.ident !== f.dep?.ident && x.ident !== f.arr?.ident)}
+            lines={[...(planPts.length > 1 ? [{ pts: planPts, color: 'rgb(94 224 239 / .85)', dash: '5 5', width: 1.6 }] : []), ...(trackPts.length > 1 ? [{ pts: trackPts, color: '#ffffff', width: 2.2 }] : [])]} />
+          <div className="flex flex-wrap items-center gap-4 border-t border-white/[0.06] px-3 py-2 text-[11.5px] text-muted">
+            {planPts.length > 1 && <span className="flex items-center gap-1.5"><span className="w-5 border-t-2 border-dashed border-live" />Filed route{fp?.routeDistanceNm ? ` · ${fmt.dist(fp.routeDistanceNm * 1.852)}` : ''}</span>}
+            {trackPts.length > 1 && <span className="flex items-center gap-1.5"><span className="h-0.5 w-5 bg-white" />Flown track · {f.track!.length} points</span>}
+            {trackPts.length > 1 && <button type="button" className="link ml-auto" onClick={() => upd({ track: undefined })}>Remove track</button>}
+          </div>
+        </div>
+      )}
+      {fp && (fp.fixes.length > 0 || (fp.unresolved?.length ?? 0) > 0) && (
+        <div className="mt-2.5 flex max-h-28 flex-wrap gap-1 overflow-y-auto">
+          {fp.fixes.filter((x) => x.type !== 'toc' && x.type !== 'tod').map((x, i) => <span key={x.ident + i} className={cx('chip h-6 font-mono text-[11px]', x.isSidStar && 'text-live')} title={[x.name, x.airway && x.airway !== 'DCT' ? `via ${x.airway}` : '', x.frequency].filter(Boolean).join(' · ')}>{x.ident}</span>)}
+          {fp.unresolved?.map((u) => <span key={'u' + u} className="chip h-6 font-mono text-[11px] opacity-50" title="No coordinates known for this name: kept in the route text, not drawn">{u}?</span>)}
+        </div>
+      )}
+      <p className="mt-2 text-[11.5px] text-faint">Import an MSFS .pln, X-Plane .fms, GPX or KML file (a GPX track with times becomes your flown track). SimBrief, the sim recorder and VATSIM/IVAO fill this in automatically.{!ready ? ' Loading navaid data…' : ''}</p>
+    </div>
   );
 }

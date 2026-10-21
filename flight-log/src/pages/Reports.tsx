@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { DateTime } from 'luxon';
-import { FileText, Download, Upload, Printer, FileJson, FileSpreadsheet, AlertTriangle, CheckCircle2, Copy, ShieldAlert, RefreshCw } from 'lucide-react';
+import { Globe2, Route, FileText, Download, Upload, Printer, FileJson, FileSpreadsheet, AlertTriangle, CheckCircle2, Copy, ShieldAlert, RefreshCw } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { useFmt } from '../lib/useFmt';
 import { summarize, groupBy, airportVisits, monthly, sortByDateDesc } from '../lib/stats';
@@ -9,7 +9,7 @@ import { aircraftLabel, typeKey, routeKey, isCounted, coerceFlight, dupKey } fro
 import { CSV_FIELDS, autoMap, parseCsv, rowsToFlights, flightsToCsv, csvTemplate, type CsvKey, type RowResult } from '../lib/csv';
 import { downloadText, readFileText } from '../lib/download';
 import { localRepo } from '../store/db';
-import { code } from '../lib/airports';
+import { code, countryName } from '../lib/airports';
 import { CATEGORY_LABEL, type Flight } from '../lib/types';
 import { ConfirmDialog, Glass, PageHeader, Segmented, cx } from '../components/ui';
 import { monthLabel } from '../lib/time';
@@ -17,10 +17,11 @@ import { sound } from '../lib/sound';
 import { pilotTotals } from '../lib/pilot';
 import { PILOT_FIELDS } from '../lib/types';
 import { loadExtendedAirports } from '../lib/airports';
+import { toKml, toGpx } from '../lib/planExport';
 
-type ReportKind = 'monthly' | 'annual' | 'aircraft' | 'routes' | 'airports' | 'hours' | 'pilot' | 'custom';
+type ReportKind = 'review' | 'monthly' | 'annual' | 'aircraft' | 'routes' | 'airports' | 'hours' | 'pilot' | 'custom';
 const KINDS: { value: ReportKind; label: string }[] = [
-  { value: 'monthly', label: 'Monthly summary' }, { value: 'annual', label: 'Annual report' }, { value: 'aircraft', label: 'Aircraft usage' },
+  { value: 'review', label: 'Year in review' }, { value: 'monthly', label: 'Monthly summary' }, { value: 'annual', label: 'Annual report' }, { value: 'aircraft', label: 'Aircraft usage' },
   { value: 'routes', label: 'Routes' }, { value: 'airports', label: 'Airport visits' }, { value: 'hours', label: 'Flight hours' }, { value: 'pilot', label: 'Pilot logbook' }, { value: 'custom', label: 'Custom range' },
 ];
 
@@ -50,7 +51,7 @@ function ReportBuilder() {
   const ws = useStore((x) => x.workspace);
   const fmt = useFmt();
   const now = DateTime.local();
-  const [kind, setKind] = useState<ReportKind>('monthly');
+  const [kind, setKind] = useState<ReportKind>('review');
   const [month, setMonth] = useState(now.toFormat('yyyy-MM'));
   const [year, setYear] = useState(String(now.year));
   const [from, setFrom] = useState(now.minus({ months: 3 }).toISODate()!);
@@ -58,7 +59,7 @@ function ReportBuilder() {
   const years = useMemo(() => [...new Set([String(now.year), ...flights.map((f) => f.date.slice(0, 4))])].sort().reverse(), [flights]);
 
   const [rFrom, rTo, period] = kind === 'monthly' ? [month + '-01', DateTime.fromISO(month + '-01').endOf('month').toISODate()!, monthLabel(month, true)]
-    : kind === 'annual' ? [`${year}-01-01`, `${year}-12-31`, year]
+    : kind === 'annual' || kind === 'review' ? [`${year}-01-01`, `${year}-12-31`, year]
     : kind === 'custom' ? [from, to, `${fmt.date(from)} – ${fmt.date(to)}`]
     : ['', '', 'All time'];
   const fs = useMemo(() => flights.filter(isCounted).filter((f) => (!rFrom || f.date >= rFrom) && (!rTo || f.date <= rTo)), [flights, rFrom, rTo]);
@@ -82,11 +83,12 @@ function ReportBuilder() {
     <section>
       <div className="no-print mb-3 flex flex-wrap items-center gap-2">
         <h2 className="mr-2 text-[17px] font-semibold tracking-tight">Reports</h2>
-        <div className="overflow-x-auto"><Segmented label="Report type" size="sm" value={kind} onChange={setKind} options={KINDS} /></div>
+        <div className="hidden overflow-x-auto md:block"><Segmented label="Report type" size="sm" value={kind} onChange={setKind} options={KINDS} /></div>
+        <select aria-label="Report type" className="input h-9 w-auto md:hidden" value={kind} onChange={(e) => setKind(e.target.value as ReportKind)}>{KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}</select>
       </div>
       <div className="no-print mb-3 flex flex-wrap items-center gap-2">
         {kind === 'monthly' && <input type="month" aria-label="Month" className="input mono h-9 w-auto" value={month} onChange={(e) => setMonth(e.target.value)} />}
-        {kind === 'annual' && <select aria-label="Year" className="input h-9 w-28" value={year} onChange={(e) => setYear(e.target.value)}>{years.map((y) => <option key={y}>{y}</option>)}</select>}
+        {(kind === 'annual' || kind === 'review') && <select aria-label="Year" className="input h-9 w-28" value={year} onChange={(e) => setYear(e.target.value)}>{years.map((y) => <option key={y}>{y}</option>)}</select>}
         {kind === 'custom' && <><input type="date" aria-label="From" className="input mono h-9 w-auto" value={from} onChange={(e) => setFrom(e.target.value)} /><span className="text-faint">→</span><input type="date" aria-label="To" className="input mono h-9 w-auto" value={to} onChange={(e) => setTo(e.target.value)} /></>}
         <div className="ml-auto flex gap-2">
           <button className="btn-glass" onClick={() => downloadText(`flightlog-report-${kind}.csv`, flightsToCsv(list), 'text/csv')} disabled={!fs.length}><FileSpreadsheet className="h-4 w-4" />CSV</button>
@@ -110,6 +112,7 @@ function ReportBuilder() {
               ))}
             </div>
             {sum.simMinutes > 0 && sum.realMinutes > 0 && <p className="text-[12px] text-muted">Of which real-world {fmt.dur(sum.realMinutes)} and simulator {fmt.dur(sum.simMinutes)}. Flight time is recorded on {sum.flightTimeKnown} of {sum.flights} flights.</p>}
+            {kind === 'review' && <YearReview fs={fs} all={flights} year={year} />}
             {(kind === 'annual' || kind === 'hours' || kind === 'custom') && <div><h4 className="mb-2 text-[14px] font-semibold">By month</h4><Table head={['Month', 'Flights', 'Flight time', 'Real', 'Sim', 'Block']} rows={months.map((m) => [monthLabel(m.month, true), m.flights, fmt.dur(m.minutes), fmt.dur(m.realMinutes), fmt.dur(m.simMinutes), fmt.dur(m.blockMinutes)])} /></div>}
             {kind === 'hours' && <div><h4 className="mb-2 text-[14px] font-semibold">By category</h4><Table head={['Category', 'Flights', 'Flight time', 'Distance']} rows={cats.map((c) => [CATEGORY_LABEL[c.key as keyof typeof CATEGORY_LABEL], c.flights, fmt.dur(c.minutes), fmt.dist(c.distanceKm)])} /></div>}
             {(kind === 'aircraft' || kind === 'annual' || kind === 'hours') && <div><h4 className="mb-2 text-[14px] font-semibold">Aircraft types</h4><Table head={['Type', 'Flights', 'Flight time', 'Distance', 'Last flown']} rows={types.map((t) => [`${t.key} · ${t.label}`, t.flights, fmt.dur(t.minutes), fmt.dist(t.distanceKm), fmt.date(t.last)])} /></div>}
@@ -128,6 +131,60 @@ function ReportBuilder() {
       </Glass>
       <p className="no-print mt-2 text-[11.5px] text-faint">PDF: choose “Save as PDF” in your browser's print dialog. The report prints on white paper with navigation hidden.</p>
     </section>
+  );
+}
+
+function YearReview({ fs, all, year }: { fs: Flight[]; all: Flight[]; year: string }) {
+  const fmt = useFmt();
+  const r = useMemo(() => {
+    const before = all.filter(isCounted).filter((f) => f.date < `${year}-01-01`);
+    const seenA = new Set(before.flatMap((f) => [f.dep?.ident, f.arr?.ident]).filter(Boolean));
+    const seenT = new Set(before.map((f) => f.aircraft.typeCode).filter(Boolean));
+    const seenC = new Set(before.flatMap((f) => [f.dep?.country, f.arr?.country]).filter(Boolean));
+    const aps = new Set(fs.flatMap((f) => [f.dep?.ident, f.arr?.ident]).filter(Boolean) as string[]);
+    const types = new Set(fs.map((f) => f.aircraft.typeCode).filter(Boolean));
+    const ctry = new Set(fs.flatMap((f) => [f.dep?.country, f.arr?.country]).filter(Boolean) as string[]);
+    const months = monthly(fs).filter((m) => m.flights > 0).sort((a, b) => b.flights - a.flights || b.minutes - a.minutes);
+    const top = (k: (f: Flight) => string | null | undefined) => groupBy(fs, k)[0] ?? null;
+    const byDist = [...fs].filter((f) => f.distanceKm != null).sort((a, b) => b.distanceKm! - a.distanceKm!);
+    const byTime = [...fs].filter((f) => f.flightMinutes != null).sort((a, b) => b.flightMinutes! - a.flightMinutes!);
+    const visits = airportVisits(fs);
+    const landings = fs.filter((f) => f.landingRateFpm != null).sort((a, b) => Math.abs(a.landingRateFpm!) - Math.abs(b.landingRateFpm!));
+    const sorted = sortByDateDesc(fs);
+    return {
+      newAirports: [...aps].filter((a) => !seenA.has(a)).length, airports: aps.size, newTypes: [...types].filter((t) => !seenT.has(t)).length, types: types.size,
+      newCountries: [...ctry].filter((c) => !seenC.has(c)), countries: ctry.size, busiest: months[0] ?? null, route: top((f) => routeKey(f)), airline: top((f) => f.airline || null),
+      type: groupBy(fs, typeKey, aircraftLabel).filter((g) => g.key !== 'UNKNOWN')[0] ?? null, far: byDist[0] ?? null, long: byTime[0] ?? null, airport: visits[0] ?? null,
+      butter: landings[0] ?? null, first: sorted[sorted.length - 1] ?? null, last: sorted[0] ?? null,
+      km: fs.reduce((a, f) => a + (f.distanceKm ?? 0), 0), min: fs.reduce((a, f) => a + (f.flightMinutes ?? 0), 0),
+    };
+  }, [fs, all, year]);
+  const route = (f: Flight) => `${code(f.dep)} → ${code(f.arr)}`;
+  const Tile = ({ k, v, sub }: { k: string; v: string; sub?: string }) => (
+    <div className="rounded-xl bg-white/[0.03] p-4 ring-1 ring-white/[0.06]"><div className="text-[11px] uppercase tracking-wider text-faint">{k}</div><div className="mt-1 text-[18px] font-semibold">{v}</div>{sub && <div className="mt-0.5 text-[12px] text-muted">{sub}</div>}</div>
+  );
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="rounded-xl2 bg-gradient-to-br from-accent/20 to-live/10 p-5 ring-1 ring-white/10">
+        <div className="text-[13px] text-muted">In {year} you flew</div>
+        <div className="mt-1 text-[28px] font-semibold tracking-tight">{fmt.dist(r.km)}</div>
+        <div className="text-[13px] text-muted">That's {(r.km / 40075).toFixed(r.km / 40075 >= 10 ? 0 : 1)}× around the Earth{r.km > 384400 ? ` and ${(r.km / 384400).toFixed(1)}× the distance to the Moon` : ''}, over {fmt.dur(r.min)} in the air.</div>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <Tile k="Airports" v={`${r.airports}`} sub={r.newAirports ? `${r.newAirports} new to your logbook` : 'No new airports'} />
+        <Tile k="Countries" v={`${r.countries}`} sub={r.newCountries.length ? `New: ${r.newCountries.slice(0, 5).map(countryName).join(', ')}${r.newCountries.length > 5 ? ` +${r.newCountries.length - 5}` : ''}` : 'No new countries'} />
+        <Tile k="Aircraft types" v={`${r.types}`} sub={r.newTypes ? `${r.newTypes} flown for the first time` : undefined} />
+        {r.far && <Tile k="Farthest flight" v={route(r.far)} sub={`${fmt.dist(r.far.distanceKm)} · ${fmt.date(r.far.date)}`} />}
+        {r.long && <Tile k="Longest in the air" v={fmt.dur(r.long.flightMinutes)} sub={`${route(r.long)} · ${fmt.date(r.long.date)}`} />}
+        {r.busiest && <Tile k="Busiest month" v={monthLabel(r.busiest.month, true)} sub={`${r.busiest.flights} flights · ${fmt.dur(r.busiest.minutes)}`} />}
+        {r.route && r.route.flights > 1 && <Tile k="Favourite route" v={r.route.key} sub={`${r.route.flights} times`} />}
+        {r.airport && <Tile k="Most visited airport" v={r.airport.label} sub={`${r.airport.name} · ${r.airport.total} visits`} />}
+        {r.type && <Tile k="Most flown type" v={r.type.key} sub={`${r.type.label} · ${r.type.flights} flights`} />}
+        {r.airline && <Tile k="Top airline" v={r.airline.key} sub={`${r.airline.flights} flights`} />}
+        {r.butter && <Tile k="Smoothest landing" v={`${Math.abs(r.butter.landingRateFpm!)} fpm`} sub={`${route(r.butter)} · ${fmt.date(r.butter.date)}`} />}
+        {r.first && <Tile k="First and last" v={`${route(r.first)}`} sub={`${fmt.date(r.first.date)}${r.last && r.last !== r.first ? ` … ${route(r.last)} on ${fmt.date(r.last.date)}` : ''}`} />}
+      </div>
+    </div>
   );
 }
 
@@ -153,6 +210,8 @@ function ExportPanel() {
       <div className="flex flex-col gap-3">
         <Row icon={FileSpreadsheet} title="CSV of all flights" body="Opens in Excel, Numbers or Google Sheets. Uses the documented Flight Log columns." action={<button className="btn-glass btn-sm" disabled={!flights.length} onClick={() => { downloadText(`flightlog-flights-${stamp}.csv`, flightsToCsv(sortByDateDesc(flights).reverse()), 'text/csv'); sound.success(); }}>Download</button>} />
         <Row icon={FileJson} title="Full JSON backup" body={<>Every field, saved filters and custom aircraft.<label className="mt-1.5 flex items-center gap-2 text-[12px]"><input type="checkbox" className="accent-[rgb(59,130,246)]" checked={withPhotos} onChange={(e) => setWithPhotos(e.target.checked)} />Include photos (larger file)</label></>} action={<button className="btn-primary btn-sm" onClick={backup}>Back up</button>} />
+        <Row icon={Globe2} title="Google Earth (KML)" body="Every flight as a line: recorded tracks in 3D, filed routes, or the great circle, plus your airports." action={<button className="btn-glass btn-sm" disabled={!flights.length} onClick={() => { downloadText(`flightlog-${stamp}.kml`, toKml(sortByDateDesc(flights).filter((f) => f.status !== 'cancelled')), 'application/vnd.google-earth.kml+xml'); sound.success(); }}>KML</button>} />
+        <Row icon={Route} title="GPX tracks" body="For mapping apps (Strava-style viewers, QGIS, Garmin). Recorded sim flights keep altitude and time." action={<button className="btn-glass btn-sm" disabled={!flights.length} onClick={() => { downloadText(`flightlog-${stamp}.gpx`, toGpx(sortByDateDesc(flights).filter((f) => f.status !== 'cancelled')), 'application/gpx+xml'); sound.success(); }}>GPX</button>} />
         <Row icon={FileText} title="CSV import template" body="Column headers with one example row. Fill it in and import below." action={<button className="btn-glass btn-sm" onClick={() => downloadText('flightlog-import-template.csv', csvTemplate(), 'text/csv')}>Template</button>} />
       </div>
       <details className="mt-4 rounded-xl bg-white/[0.03] p-3 text-[12px] text-muted ring-1 ring-white/[0.06]">

@@ -162,7 +162,9 @@ export interface AirportBrief {
 }
 
 export interface FlightPlan {
-  source: 'simbrief' | 'manual';
+  source: 'simbrief' | 'manual' | 'file';
+  label?: string;          // where a manual/file route came from
+  unresolved?: string[];   // typed fixes without known coordinates
   route: string;
   fullRoute?: string;      // reconstructed from the navlog, including SID and STAR
   sid?: string;
@@ -258,6 +260,45 @@ export interface Settings {
   simbriefUser: string;
   sounds: boolean;
   soundVolume: number;           // 0–1
+  goals: Goals;
+  networkProvider: 'vatsim' | 'ivao';
+  networkId: string;               // VATSIM CID or IVAO VID
+  profileHandle: string;           // public profile handle (optional)
+  profileBio: string;
+}
+
+/** Personal targets. null = no goal set. Counted from completed real + sim flights. */
+export interface Goals {
+  yearFlights: number | null;
+  yearHours: number | null;
+  monthFlights: number | null;
+  yearNewAirports: number | null;
+}
+
+/** A friend's public profile snapshot (from a share link or the cloud). */
+export interface Friend {
+  id: string;
+  handle: string;
+  name: string;
+  addedAt: string;
+  source: 'link' | 'cloud';
+  profile: PublicProfile;
+}
+
+export interface PublicProfile {
+  v: 1;
+  name: string;
+  handle: string;
+  bio: string;
+  home: string;
+  updated: string;                 // ISO date the snapshot was made
+  totals: { flights: number; minutes: number; km: number; airports: number; countries: number; types: number; realFlights: number; simFlights: number };
+  routes: [string, string, number][];   // [dep ident, arr ident, count]
+  topTypes: [string, number][];
+  topAirports: [string, number][];
+  firstDate: string | null;
+  lastDate: string | null;
+  badges: number;
 }
 
 export interface FilterPreset {
@@ -304,6 +345,7 @@ export interface WorkspaceData {
   achievementsSeen: string[];
   integrations: Record<string, IntegrationState>;
   customAircraft: CustomAircraft[];
+  friends?: Friend[];
 }
 
 export interface CustomAircraft {

@@ -48,6 +48,7 @@ export default function FlightDetail() {
   }, [f, flights]);
 
   const map = useMemo(() => (f ? buildMapData([{ ...f, status: 'completed' }]) : null), [f]);
+  const replay = useReplay(f?.track);
 
   if (!f) {
     return <EmptyState title="Flight not found" body="It may have been deleted, or it belongs to the other workspace (demo / personal)." action={<Link to="/flights" className="btn-glass">Back to logbook</Link>} />;
@@ -59,7 +60,7 @@ export default function FlightDetail() {
   const course = f.dep?.lat != null && f.arr?.lat != null ? Math.round(initialBearing(f.dep.lat, f.dep.lon!, f.arr.lat, f.arr.lon!)) : null;
   const planPath = plannedPath(f);
   const trackPts = f.track && f.track.length > 1 ? f.track.map((p) => [p.lon, p.lat] as [number, number]) : null;
-  const fitPts = trackPts ?? planPath ?? (f.dep?.lon != null && f.arr?.lon != null ? [[f.dep.lon, f.dep.lat!], [f.arr.lon, f.arr.lat!]] as [number, number][] : undefined);
+  const fitPts = trackPts && planPath ? [...trackPts, ...planPath] : trackPts ?? planPath ?? (f.dep?.lon != null && f.arr?.lon != null ? [[f.dep.lon, f.dep.lat!], [f.arr.lon, f.arr.lat!]] as [number, number][] : undefined);
   const fp = f.flightPlan;
   const depDelay = minutesDelta(f.times.schedOut, f.times.offBlock);
   const arrDelay = minutesDelta(f.times.schedIn, f.times.onBlock);
@@ -91,9 +92,9 @@ export default function FlightDetail() {
     <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-center gap-2">
         <button className="btn-ghost -ml-2" onClick={() => (history.length > 1 ? nav(-1) : nav('/flights'))}><ArrowLeft className="h-4 w-4" />Back</button>
-        <div className="ml-auto flex gap-2">
+        <div className="ml-auto flex flex-wrap justify-end gap-2">
           {f.status === 'planned' && <button className="btn-primary" onClick={() => markFlown()}><CheckCircle2 className="h-4 w-4" />Mark as flown</button>}
-          <button className="btn-glass" onClick={() => openForm(f, 'edit')}><Pencil className="h-4 w-4" />Edit</button>
+          <button className="btn-glass" onClick={() => openForm(f, 'edit')} aria-label="Edit flight"><Pencil className="h-4 w-4" /><span className={f.status === 'planned' ? 'hidden sm:inline' : ''}>Edit</span></button>
           <button className="btn-glass" onClick={() => setShare(true)} aria-label="Share flight"><Share2 className="h-4 w-4" /><span className="hidden sm:inline">Share</span></button>
           <button className="btn-glass" onClick={() => openForm(f, 'duplicate')}><Copy className="h-4 w-4" /><span className="hidden sm:inline">Duplicate</span></button>
           <button className="btn-glass hover:text-bad" onClick={() => setConfirm(true)} aria-label="Delete flight"><Trash2 className="h-4 w-4" /></button>
@@ -145,11 +146,12 @@ export default function FlightDetail() {
           {/* Map */}
           {map && fitPts && (
             <Glass className="overflow-hidden p-0">
-              <WorldMap routes={map.routes} airports={map.airports} fit={fitPts} height={360} selectedRoute={map.routes[0]?.key} lines={trackPts && planPath ? [{ pts: planPath, color: 'rgb(94 224 239 / .6)', dash: '4 5', width: 1.4 }] : undefined} fixes={fp?.fixes.filter((x) => x.ident !== f.dep?.ident && x.ident !== f.arr?.ident && x.type !== 'toc' && x.type !== 'tod')} />
+              <WorldMap routes={map.routes} airports={map.airports} fit={fitPts} height={360} selectedRoute={map.routes[0]?.key} lines={[...(trackPts && planPath ? [{ pts: planPath, color: 'rgb(94 224 239 / .6)', dash: '4 5', width: 1.4 }] : []), ...(replay.active && replay.flown.length > 1 ? [{ pts: replay.flown, color: '#ffffff', width: 3 }] : [])]} live={replay.active ? replay.pos : null} fixes={fp?.fixes.filter((x) => x.ident !== f.dep?.ident && x.ident !== f.arr?.ident && x.type !== 'toc' && x.type !== 'tod')} />
               <div className="flex items-center justify-between border-t border-white/[0.06] px-4 py-2.5 text-[12px] text-muted">
                 <span>{trackPts ? `Recorded track: ${f.track!.length} points${f.recordedDistanceKm != null ? ` · ${fmt.dist(f.recordedDistanceKm)} flown` : ''}${planPath ? ' · dashed line is the filed route' : ''}${f.landingRateFpm != null ? ` · landed at ${Math.abs(f.landingRateFpm)} fpm` : ''}` : planPath ? `Filed route: ${fp!.fixes.length} fixes${fp!.routeDistanceNm ? ` · ${fmt.dist(fp!.routeDistanceNm * 1.852)} planned vs ${fmt.dist(f.distanceKm)} great-circle` : ''}` : 'Great-circle path between the airport coordinates'}</span>
                 <Link to="/map" className="link">Open full map</Link>
               </div>
+              {replay.ok && <ReplayBar r={replay} />}
             </Glass>
           )}
 
@@ -305,7 +307,9 @@ function Stat({ icon: Icon, label, value, sub, tip }: { icon: any; label: string
 import { ShareFlightDialog } from '../components/flight/ShareFlight';
 
 import { FileText as FileIcon, ExternalLink, Fuel as FuelIcon, Copy as CopyIcon, Download as DownloadIcon, PlaneTakeoff, PlaneLanding, Navigation } from 'lucide-react';
-import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip as RTooltip, CartesianGrid } from 'recharts';
+import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip as RTooltip, CartesianGrid, ReferenceLine } from 'recharts';
+import { Play, Pause } from 'lucide-react';
+import type { TrackPoint } from '../lib/types';
 import { loadRunways, findRunway, SURFACE } from '../lib/runways';
 import { toMsfsPln, toXplaneFms, planFileName } from '../lib/planExport';
 import { downloadText } from '../lib/download';
@@ -333,6 +337,101 @@ function BriefCard({ title, icon: Icon, ident, b, proc, procLabel }: { title: st
       </div>
       {b?.metar && <p className="mono mt-2.5 break-words rounded-lg bg-deep/70 p-2 text-[11px] leading-relaxed text-ice/85 ring-1 ring-white/[0.05]"><span className="text-faint">METAR </span>{b.metar}</p>}
       {b?.taf && <details className="mt-1.5"><summary className="cursor-pointer text-[11.5px] text-muted">TAF</summary><p className="mono mt-1 break-words rounded-lg bg-deep/70 p-2 text-[11px] leading-relaxed text-ice/85 ring-1 ring-white/[0.05]">{b.taf}</p></details>}
+    </div>
+  );
+}
+
+// ─── Flight replay ──────────────────────────────────────────────────────────
+const SPEEDS = [10, 30, 60, 120, 300, 600];
+type Replay = ReturnType<typeof useReplay>;
+
+function useReplay(track?: TrackPoint[]) {
+  const pts = useMemo(() => (track ?? []).filter((p) => Number.isFinite(p.t) && Number.isFinite(p.lat) && Number.isFinite(p.lon)).sort((a, b) => a.t - b.t), [track]);
+  const ok = pts.length > 2 && pts[pts.length - 1].t > pts[0].t;
+  const t0 = ok ? pts[0].t : 0, t1 = ok ? pts[pts.length - 1].t : 0;
+  const auto = SPEEDS.find((s) => (t1 - t0) / s <= 75) ?? SPEEDS[SPEEDS.length - 1];
+  const [t, setT] = useState(t0);
+  const [playing, setPlaying] = useState(false);
+  const [active, setActive] = useState(false);
+  const [speed, setSpeed] = useState(auto);
+  useEffect(() => { setT(t0); setPlaying(false); setActive(false); setSpeed(auto); }, [t0, t1]);
+  useEffect(() => {
+    if (!playing) return;
+    let raf = 0, last = performance.now(), acc = 0;
+    const tick = (now: number) => {
+      acc += (now - last) / 1000; last = now;
+      if (acc > 1 / 30) {
+        const dt = acc; acc = 0;
+        setT((x) => { const n = x + dt * speed; if (n >= t1) { setPlaying(false); return t1; } return n; });
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [playing, speed, t1]);
+  // interpolate the aircraft state at time t
+  let i = 0, lo = 0, hi = pts.length - 1;
+  while (ok && lo <= hi) { const m = (lo + hi) >> 1; if (pts[m].t <= t) { i = m; lo = m + 1; } else hi = m - 1; }
+  const a = pts[i], b = pts[Math.min(i + 1, pts.length - 1)];
+  const u = ok && b.t > a.t ? Math.min(1, Math.max(0, (t - a.t) / (b.t - a.t))) : 0;
+  const lerp = (x: number, y: number) => x + (y - x) * u;
+  const lat = ok ? lerp(a.lat, b.lat) : 0, lon = ok ? lerp(a.lon, b.lon) : 0;
+  let hdg = 0;
+  if (ok) { let j = i; while (j < pts.length - 1 && pts[j + 1].lat === pts[j].lat && pts[j + 1].lon === pts[j].lon) j++; const c = pts[Math.min(j + 1, pts.length - 1)], d = pts[j]; hdg = c === d ? 0 : initialBearing(d.lat, d.lon, c.lat, c.lon); }
+  const flown: [number, number][] = ok ? [...pts.slice(0, i + 1).map((p) => [p.lon, p.lat] as [number, number]), [lon, lat]] : [];
+  return {
+    ok, pts, t, t0, t1, playing, active, speed, flown,
+    pos: { lat, lon, hdg },
+    altFt: ok ? Math.round(lerp(a.altFt ?? 0, b.altFt ?? 0)) : 0,
+    gsKt: ok ? Math.round(lerp(a.gsKt ?? 0, b.gsKt ?? 0)) : 0,
+    vsFpm: ok && b.t > a.t ? Math.round((((b.altFt ?? 0) - (a.altFt ?? 0)) / (b.t - a.t)) * 60 / 50) * 50 : 0,
+    play() { setActive(true); if (t >= t1) setT(t0); setPlaying(true); },
+    pause() { setPlaying(false); },
+    seek(x: number) { setActive(true); setT(Math.min(t1, Math.max(t0, x))); },
+    setSpeed,
+    stop() { setPlaying(false); setActive(false); setT(t0); },
+  };
+}
+
+function ReplayBar({ r }: { r: Replay }) {
+  const fmt = useFmt();
+  const chart = useMemo(() => {
+    const step = Math.max(1, Math.ceil(r.pts.length / 300));
+    return r.pts.filter((_, i) => i % step === 0 || i === r.pts.length - 1).map((p) => ({ t: p.t, alt: p.altFt ?? 0 }));
+  }, [r.pts]);
+  const el = Math.round(r.t - r.t0);
+  const hhmm = (s: number) => `${Math.floor(s / 3600)}:${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+  return (
+    <div className="border-t border-white/[0.06] px-4 py-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <button className="btn-primary h-9 w-9 rounded-full p-0" onClick={() => (r.playing ? r.pause() : r.play())} aria-label={r.playing ? 'Pause replay' : 'Play replay'}>
+          {r.playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 translate-x-[1px]" />}
+        </button>
+        <div className="min-w-0">
+          <div className="text-[13px] font-medium">Flight replay</div>
+          <div className="mono text-[11.5px] text-muted">{hhmm(el)} / {hhmm(Math.round(r.t1 - r.t0))} · {new Date(r.t * 1000).toISOString().slice(11, 16)}Z</div>
+        </div>
+        <div className="ml-auto flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px]">
+          <span><span className="text-faint">ALT </span><span className="mono">{r.altFt >= 18000 ? `FL${Math.round(r.altFt / 100)}` : fmt.alt(r.altFt)}</span></span>
+          <span><span className="text-faint">GS </span><span className="mono">{r.gsKt} kt</span></span>
+          <span><span className="text-faint">V/S </span><span className="mono">{r.vsFpm > 0 ? '+' : ''}{r.vsFpm}</span></span>
+          <span><span className="text-faint">HDG </span><span className="mono">{String(Math.round(r.pos.hdg)).padStart(3, '0')}°</span></span>
+          <select aria-label="Replay speed" className="input mono h-8 w-auto py-0 text-[12px]" value={r.speed} onChange={(e) => r.setSpeed(+e.target.value)}>{SPEEDS.map((s) => <option key={s} value={s}>{s}×</option>)}</select>
+          {r.active && <button className="btn-ghost btn-sm" onClick={r.stop}>Reset</button>}
+        </div>
+      </div>
+      <div className="relative mt-2 h-16">
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={chart} margin={{ top: 4, right: 0, bottom: 0, left: 0 }}>
+            <defs><linearGradient id="rpAlt" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#5ee0ef" stopOpacity={0.45} /><stop offset="100%" stopColor="#5ee0ef" stopOpacity={0} /></linearGradient></defs>
+            <XAxis dataKey="t" type="number" domain={[r.t0, r.t1]} hide />
+            <YAxis hide domain={[0, 'dataMax']} />
+            <Area type="monotone" dataKey="alt" stroke="#5ee0ef" strokeWidth={1.5} fill="url(#rpAlt)" isAnimationActive={false} />
+            <ReferenceLine x={r.t} stroke="#ffffff" strokeWidth={1.5} />
+          </AreaChart>
+        </ResponsiveContainer>
+        <input type="range" aria-label="Replay position" className="absolute inset-0 h-full w-full cursor-pointer opacity-0" min={r.t0} max={r.t1} step={1} value={Math.round(r.t)} onChange={(e) => r.seek(+e.target.value)} />
+      </div>
     </div>
   );
 }
@@ -369,7 +468,7 @@ function FlightPlanCard({ f }: { f: Flight }) {
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <FileIcon className="h-4 w-4 text-ice" />
         <h3 className="text-[14px] font-semibold">Flight plan</h3>
-        <span className="chip">{fp.source === 'simbrief' ? 'SimBrief OFP' : 'Manual'}</span>
+        <span className="chip">{fp.source === 'simbrief' ? 'SimBrief OFP' : fp.label || (fp.source === 'file' ? 'Route file' : 'Typed route')}</span>
         {fp.airac && <span className="chip">AIRAC {fp.airac}</span>}
         {fp.sid && <span className="chip text-live ring-live/25">SID {fp.sid}</span>}
         {fp.star && <span className="chip text-live ring-live/25">STAR {fp.star}</span>}
@@ -412,6 +511,7 @@ function FlightPlanCard({ f }: { f: Flight }) {
       <div className="mt-4">
         <div className="mb-1.5 flex items-center justify-between"><div className="label">Full route</div><button className="btn-ghost btn-sm" onClick={() => copy(route, 'Route')}><CopyIcon className="h-3.5 w-3.5" />Copy</button></div>
         <p className="mono break-words rounded-xl bg-deep/70 p-3 text-[12px] leading-relaxed text-ice/90 ring-1 ring-white/[0.06]">{route}</p>
+        {(fp.unresolved?.length ?? 0) > 0 && <p className="mt-1.5 text-[11.5px] text-faint">Not drawn on the map (no coordinates known): <span className="mono">{fp.unresolved!.join(' ')}</span>. Import a .pln, .fms or SimBrief plan to place every waypoint.</p>}
       </div>
 
       {profile.length > 2 && (

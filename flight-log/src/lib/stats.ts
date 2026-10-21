@@ -204,3 +204,50 @@ export function pctChange(a: number, b: number): number | null {
 export function sortByDateDesc(flights: Flight[]): Flight[] {
   return [...flights].sort((a, b) => (b.date + (b.times.offBlock ?? b.times.takeoff ?? '')).localeCompare(a.date + (a.times.offBlock ?? a.times.takeoff ?? '')));
 }
+
+// ─── Goals and streaks ──────────────────────────────────────────────────────
+import type { Goals } from './types';
+import { DateTime as DT } from 'luxon';
+
+export interface Streaks { months: number; monthsBest: number; monthAtRisk: boolean; weeks: number; weeksBest: number; weekAtRisk: boolean }
+
+/** Consecutive calendar months / ISO weeks with at least one completed flight. */
+export function streaks(all: Flight[], now: DT = DT.local()): Streaks {
+  const fs = all.filter((f) => f.status === 'completed' || f.status === 'diverted');
+  const months = new Set(fs.map((f) => f.date.slice(0, 7)));
+  const weeks = new Set(fs.map((f) => { const d = DT.fromISO(f.date); return d.isValid ? `${d.weekYear}-${d.weekNumber}` : ''; }));
+  const run = (has: (d: DT) => boolean, start: DT, step: 'months' | 'weeks') => {
+    let n = 0, d = start;
+    while (has(d) && n < 1200) { n++; d = d.minus({ [step]: 1 }); }
+    return n;
+  };
+  const mKey = (d: DT) => d.toFormat('yyyy-MM'), wKey = (d: DT) => `${d.weekYear}-${d.weekNumber}`;
+  const mNow = months.has(mKey(now)), wNow = weeks.has(wKey(now));
+  // runs counted forwards from their start: walk forward instead of back
+  const fwd = (set: Set<string>, key: (d: DT) => string, start: DT, step: 'months' | 'weeks') => { let n = 0, d = start; while (set.has(key(d)) && n < 1200) { n++; d = d.plus({ [step]: 1 }); } return n; };
+  const bestM = Math.max(0, ...[...months].map((k) => DT.fromFormat(k, 'yyyy-MM')).filter((d) => d.isValid && !months.has(mKey(d.minus({ months: 1 })))).map((d) => fwd(months, mKey, d, 'months')));
+  const bestW = Math.max(0, ...[...weeks].filter(Boolean).map((k) => DT.fromObject({ weekYear: +k.split('-')[0], weekNumber: +k.split('-')[1] })).filter((d) => d.isValid && !weeks.has(wKey(d.minus({ weeks: 1 })))).map((d) => fwd(weeks, wKey, d, 'weeks')));
+  const curM = run((d) => months.has(mKey(d)), mNow ? now : now.minus({ months: 1 }), 'months');
+  const curW = run((d) => weeks.has(wKey(d)), wNow ? now : now.minus({ weeks: 1 }), 'weeks');
+  return { months: curM, monthsBest: Math.max(bestM, curM), monthAtRisk: !mNow && curM > 0, weeks: curW, weeksBest: Math.max(bestW, curW), weekAtRisk: !wNow && curW > 0 };
+}
+
+export interface GoalProgress { key: keyof Goals; label: string; target: number; value: number; unit: 'flights' | 'hours' | 'airports'; pace: number | null }
+
+/** Progress toward each goal that is set, with the value you'd reach at the current pace. */
+export function goalProgress(all: Flight[], goals: Goals, now: DT = DT.local()): GoalProgress[] {
+  const fs = all.filter((f) => f.status === 'completed' || f.status === 'diverted');
+  const y = String(now.year), m = now.toFormat('yyyy-MM');
+  const year = fs.filter((f) => f.date.startsWith(y)), month = fs.filter((f) => f.date.startsWith(m));
+  const before = new Set(fs.filter((f) => f.date < `${y}-01-01`).flatMap((f) => [f.dep?.ident, f.arr?.ident]).filter(Boolean));
+  const newAp = new Set(year.flatMap((f) => [f.dep?.ident, f.arr?.ident]).filter((a): a is string => !!a && !before.has(a)));
+  const yFrac = Math.max(0.02, now.diff(now.startOf('year'), 'days').days / (now.endOf('year').diff(now.startOf('year'), 'days').days || 365));
+  const mFrac = Math.max(0.03, (now.day - 1 + now.hour / 24) / now.daysInMonth!);
+  const out: GoalProgress[] = [];
+  const push = (key: keyof Goals, label: string, value: number, unit: GoalProgress['unit'], frac: number) => { const t = goals[key]; if (t) out.push({ key, label, target: t, value, unit, pace: value / frac }); };
+  push('yearFlights', `Flights in ${y}`, year.length, 'flights', yFrac);
+  push('yearHours', `Hours in ${y}`, year.reduce((a, f) => a + (f.flightMinutes ?? 0), 0) / 60, 'hours', yFrac);
+  push('monthFlights', `Flights in ${now.toFormat('LLLL')}`, month.length, 'flights', mFrac);
+  push('yearNewAirports', `New airports in ${y}`, newAp.size, 'airports', yFrac);
+  return out;
+}

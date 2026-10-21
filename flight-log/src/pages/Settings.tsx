@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { DateTime } from 'luxon';
-import { User, Ruler, Palette, Volume2, NotebookPen, LayoutDashboard, Shield, Plug, Database, Info, Cloud, CloudOff, LogOut, LogIn, RefreshCw, Trash2, Upload, Download, Gauge, ArrowUp, ArrowDown, Play, Settings2, KeyRound } from 'lucide-react';
+import { Target, User, Ruler, Palette, Volume2, NotebookPen, LayoutDashboard, Shield, Plug, Database, Info, Cloud, CloudOff, LogOut, LogIn, RefreshCw, Trash2, Upload, Download, Gauge, ArrowUp, ArrowDown, Play, Settings2, KeyRound } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { Field, Glass, PageHeader, Segmented, Toggle, ConfirmDialog, Dialog, cx } from '../components/ui';
 import { Avatar } from '../components/layout/AppShell';
@@ -19,7 +19,7 @@ const ALL_CARDS = Object.keys(CARD_LABELS);
 const CHART_LABELS: Record<string, string> = { monthlyHours: 'Monthly flight hours', flightsPerMonth: 'Flights per month', cumulative: 'Cumulative hours', byType: 'Flights by aircraft type', byAirline: 'Flights by airline', byCategory: 'Flights by category', topAirports: 'Most visited airports', domestic: 'Domestic vs international' };
 
 const SECTIONS = [
-  { id: 'account', label: 'Account', icon: Cloud }, { id: 'profile', label: 'Profile', icon: User }, { id: 'units', label: 'Units & formats', icon: Ruler },
+  { id: 'account', label: 'Account', icon: Cloud }, { id: 'profile', label: 'Profile', icon: User }, { id: 'goals', label: 'Goals', icon: Target }, { id: 'units', label: 'Units & formats', icon: Ruler },
   { id: 'appearance', label: 'Appearance', icon: Palette }, { id: 'sound', label: 'Sound', icon: Volume2 }, { id: 'defaults', label: 'Logbook defaults', icon: NotebookPen },
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard }, { id: 'charts', label: 'Charts', icon: LayoutDashboard }, { id: 'privacy', label: 'Privacy', icon: Shield }, { id: 'integrations', label: 'Integrations', icon: Plug },
   { id: 'data', label: 'Data', icon: Database }, { id: 'about', label: 'About', icon: Info },
@@ -30,6 +30,8 @@ export default function SettingsPage() {
   const update = useStore((x) => x.updateSettings);
   const toast = useStore((x) => x.toast);
   const set = (p: Partial<Settings>) => { update(p); };
+  const [params] = useSearchParams();
+  useEffect(() => { const sec = params.get('section'); if (sec) setTimeout(() => document.getElementById(`set-${sec}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250); }, [params]);
   const row = 'flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6';
   const rowLabel = (t: string, d?: string) => <div className="min-w-0"><div className="text-[13.5px] font-medium">{t}</div>{d && <div className="text-[12px] text-muted">{d}</div>}</div>;
 
@@ -54,6 +56,12 @@ export default function SettingsPage() {
             <div className={row}>{rowLabel('Flying type', 'Sets defaults and wording. Simulator time is never counted as real-world time.')}
               <select className="input sm:max-w-xs" value={s.profile} onChange={(e) => set({ profile: e.target.value as FlyingProfile })} aria-label="Flying type">{(Object.keys(PROFILE_LABEL) as FlyingProfile[]).map((p) => <option key={p} value={p}>{PROFILE_LABEL[p]}</option>)}</select></div>
             <div className={row}>{rowLabel('Home airport')}<div className="sm:w-80"><AirportPicker label="Home airport" value={s.homeAirport ? (findAirport(s.homeAirport) ? toRef(findAirport(s.homeAirport)!) : null) : null} onChange={(a) => set({ homeAirport: a?.ident ?? '' })} /></div></div>
+          </Section>
+
+          <Section id="goals" title="Goals" icon={Target} note="Leave a goal empty to hide it. Progress rings on Overview count completed real and simulator flights.">
+            {([['yearFlights', `Flights in ${DateTime.local().year}`], ['yearHours', `Flight hours in ${DateTime.local().year}`], ['monthFlights', 'Flights each month'], ['yearNewAirports', `New airports in ${DateTime.local().year}`]] as const).map(([k, l]) => (
+              <div key={k} className={row}>{rowLabel(l)}<input type="number" min={0} inputMode="numeric" className="input mono sm:max-w-[140px]" value={s.goals[k] ?? ''} placeholder="No goal" aria-label={l} onChange={(e) => { const v = e.target.value === '' ? null : Math.max(0, Number(e.target.value)) || null; set({ goals: { ...s.goals, [k]: v } }); }} /></div>
+            ))}
           </Section>
 
           <Section id="units" title="Units & formats" icon={Ruler} note="Values are stored in km, ft, kt and minutes, then converted for display, so switching never changes your data.">

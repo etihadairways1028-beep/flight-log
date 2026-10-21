@@ -1,4 +1,4 @@
-import type { AirportRef, Flight, FlightCategory, FlightStatus, Settings } from './types';
+import type { AirportRef, Flight, FlightCategory, FlightStatus, Settings, FlightPlan, PlanFix } from './types';
 import { emptyPilot, PILOT_FIELDS } from './types';
 import { deriveDurations, isValidISODate, todayISO } from './time';
 import { distanceBetween } from './geo';
@@ -111,7 +111,7 @@ const num = (v: unknown): number | null => {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 };
-const str = (v: unknown) => (typeof v === 'string' ? v : v == null ? '' : String(v));
+const str = (v: unknown) => (typeof v === 'string' ? v : v == null || typeof v === 'object' ? '' : String(v));
 const inst = (v: unknown): string | null => {
   if (!v) return null;
   const t = Date.parse(String(v));
@@ -163,7 +163,7 @@ export function coerceFlight(raw: any): { flight?: Flight; error?: string } {
     takeoffsDay: num(raw.takeoffsDay), takeoffsNight: num(raw.takeoffsNight), landingsDay: num(raw.landingsDay), landingsNight: num(raw.landingsNight),
     track: Array.isArray(raw.track) ? raw.track.filter((p: any) => p && Number.isFinite(p.lat) && Number.isFinite(p.lon)).slice(0, 3000) : undefined,
     landingRateFpm: num(raw.landingRateFpm),
-    flightPlan: raw.flightPlan && typeof raw.flightPlan === 'object' && Array.isArray(raw.flightPlan.fixes) ? raw.flightPlan : undefined,
+    flightPlan: normalizePlan(raw.flightPlan),
     pilot: Object.fromEntries(PILOT_FIELDS.map((p) => [p.key, num(raw.pilot?.[p.key])])) as any,
     rating: num(raw.rating), tags: Array.isArray(raw.tags) ? raw.tags.map(str).filter(Boolean) : [],
     photos: Array.isArray(raw.photos) ? raw.photos.map(str) : [], notes: str(raw.notes), simulator: str(raw.simulator),
@@ -172,6 +172,44 @@ export function coerceFlight(raw: any): { flight?: Flight; error?: string } {
   const fin = finalizeFlight(f);
   fin.updatedAt = f.updatedAt;
   return { flight: fin };
+}
+
+const nn = (v: any): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : typeof v === 'string' && v.trim() !== '' && Number.isFinite(+v) ? +v : null);
+function brief(b: any) {
+  if (!b || typeof b !== 'object') return undefined;
+  return { ...b, runway: str(b.runway), transAlt: nn(b.transAlt), transLevel: nn(b.transLevel), metar: str(b.metar), taf: str(b.taf), elevationFt: nn(b.elevationFt) };
+}
+/** Repair a flight plan saved by any app version, so older records can never crash a page. */
+export function normalizePlan(fp: any): FlightPlan | undefined {
+  if (!fp || typeof fp !== 'object') return undefined;
+  const fixes: PlanFix[] = (Array.isArray(fp.fixes) ? fp.fixes : [])
+    .filter((x: any) => x && Number.isFinite(+x.lat) && Number.isFinite(+x.lon))
+    .map((x: any) => ({ ...x, ident: str(x.ident) || '?', name: str(x.name), type: str(x.type), lat: +x.lat, lon: +x.lon, altFt: nn(x.altFt), airway: str(x.airway), stage: str(x.stage), elapsedMin: nn(x.elapsedMin),
+      frequency: x.frequency == null ? undefined : str(x.frequency), mach: x.mach == null ? undefined : str(x.mach), fir: x.fir == null ? undefined : str(x.fir), region: x.region == null ? undefined : str(x.region) }));
+  const fu = fp.fuel && typeof fp.fuel === 'object' ? fp.fuel : {};
+  return {
+    ...fp,
+    source: fp.source === 'manual' || fp.source === 'file' ? fp.source : 'simbrief',
+    label: fp.label == null ? undefined : str(fp.label),
+    unresolved: Array.isArray(fp.unresolved) ? fp.unresolved.map(str).filter(Boolean).slice(0, 200) : undefined,
+    route: str(fp.route), fullRoute: fp.fullRoute == null ? undefined : str(fp.fullRoute), sid: fp.sid == null ? undefined : str(fp.sid), star: fp.star == null ? undefined : str(fp.star),
+    depBrief: brief(fp.depBrief), arrBrief: brief(fp.arrBrief), altnBrief: fp.altnBrief ? { ...brief(fp.altnBrief)!, icao: str(fp.altnBrief.icao) } : undefined,
+    initialAltFt: nn(fp.initialAltFt), fixes,
+    routeDistanceNm: nn(fp.routeDistanceNm), airDistanceNm: nn(fp.airDistanceNm), plannedEteMin: nn(fp.plannedEteMin),
+    cruiseFl: str(fp.cruiseFl), costIndex: str(fp.costIndex), alternate: str(fp.alternate), airac: str(fp.airac), fuelUnit: fp.fuelUnit === 'lb' ? 'lb' : 'kg',
+    fuel: { ramp: nn(fu.ramp), takeoff: nn(fu.takeoff), trip: nn(fu.trip), reserve: nn(fu.reserve), alternate: nn(fu.alternate), contingency: nn(fu.contingency), landing: nn(fu.landing) },
+    avgWind: str(fp.avgWind), ofpUrl: str(fp.ofpUrl),
+    downloads: Array.isArray(fp.downloads) ? fp.downloads.filter((d: any) => d && typeof d.url === 'string' && /^https:\/\//.test(d.url)).map((d: any) => ({ name: str(d.name) || 'File', url: d.url })) : [],
+    requestId: str(fp.requestId), generatedAt: fp.generatedAt ? str(fp.generatedAt) : null,
+  };
+}
+
+/** Repair a stored record from an older version; falls back to the record as-is if it can't be read. */
+export function normalizeStoredFlight(raw: any): Flight | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const c = coerceFlight(raw);
+  if (!c.flight) return { ...emptyFlight(), ...raw, flightPlan: normalizePlan(raw.flightPlan), tags: Array.isArray(raw.tags) ? raw.tags : [], photos: Array.isArray(raw.photos) ? raw.photos : [] };
+  return { ...c.flight, id: str(raw.id) || c.flight.id, source: raw.source ?? c.flight.source, createdAt: str(raw.createdAt) || c.flight.createdAt, updatedAt: str(raw.updatedAt) || c.flight.updatedAt };
 }
 
 /** Duplicate signature: same date, route and flight number/callsign. */

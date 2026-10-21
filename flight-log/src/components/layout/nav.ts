@@ -1,4 +1,4 @@
-import { Radio, LayoutDashboard, NotebookTabs, BarChart3, Globe2, Plane, TowerControl, CalendarDays, Award, FileText, Settings } from 'lucide-react';
+import { Users, Radio, LayoutDashboard, NotebookTabs, BarChart3, Globe2, Plane, TowerControl, CalendarDays, Award, FileText, Settings } from 'lucide-react';
 
 export const NAV = [
   { to: '/', label: 'Overview', icon: LayoutDashboard, end: true },
@@ -10,6 +10,7 @@ export const NAV = [
   { to: '/airports', label: 'Airports', icon: TowerControl },
   { to: '/calendar', label: 'Calendar', icon: CalendarDays },
   { to: '/achievements', label: 'Achievements', icon: Award },
+  { to: '/friends', label: 'Friends', icon: Users },
   { to: '/reports', label: 'Reports & Export', icon: FileText },
   { to: '/settings', label: 'Settings', icon: Settings },
 ] as const;

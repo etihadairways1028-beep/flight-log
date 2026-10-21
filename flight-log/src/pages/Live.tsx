@@ -7,10 +7,12 @@ import { PHASE_LABEL, landingRating, recordingToFlight, nearestAirport } from '.
 import { Glass, PageHeader, Segmented, Toggle, cx, Tip } from '../components/ui';
 import { WorldMap } from '../components/map/WorldMap';
 import { useFmt } from '../lib/useFmt';
-import { code, loadExtendedAirports } from '../lib/airports';
+import { code, loadExtendedAirports, findAirport } from '../lib/airports';
 import { bestPath, plannedPath } from '../lib/flight';
-import { toMsfsPln, toXplaneFms, planFileName } from '../lib/planExport';
+import { toMsfsPln, toXplaneFms, planFileName, loadNavaids } from '../lib/planExport';
 import { sound } from '../lib/sound';
+import { useNet, NETWORK_LABEL, type Network } from '../lib/network';
+import { Wifi, WifiOff, Users } from 'lucide-react';
 
 const AUTO_KEY = 'skylog:auto-record';
 
@@ -30,7 +32,7 @@ export default function Live() {
   const linked = planned.find((f) => f.id === linkId) ?? null;
   const { tel, rec, status } = sim;
 
-  useEffect(() => { loadExtendedAirports(); }, []);
+  useEffect(() => { loadExtendedAirports(); loadNavaids(); }, []);
   useEffect(() => { if (status === 'live' && auto && !sim.recording) sim.startRecording(); }, [status, auto, sim.recording]);
   // suggest the planned flight departing from where the aircraft is parked
   useEffect(() => {
@@ -66,7 +68,7 @@ export default function Live() {
 
   return (
     <div className="flex flex-col gap-5">
-      <PageHeader eyebrow="Simulator" title="Sim Live" sub="Connect Microsoft Flight Simulator 2020/2024 or X-Plane 11/12 through the Flight Log bridge. Your flight is tracked live and logged automatically: gate times, takeoff, landing, landing rate, distance and the exact path you flew." />
+      <PageHeader eyebrow="Simulator" title="Sim Live" sub="Connect Microsoft Flight Simulator 2020/2024 or X-Plane 11/12 through the Flight Log bridge, or track your VATSIM / IVAO flight online. Your flight is followed live and logged automatically: gate times, takeoff, landing, distance and the exact path you flew." />
 
       {/* connection */}
       <Glass className="flex flex-wrap items-center gap-4 p-4">
@@ -82,6 +84,8 @@ export default function Live() {
         <label className="hidden items-center gap-2 text-[12.5px] text-muted md:flex">Bridge<input className="input mono h-8 w-[210px] text-[12px]" value={sim.url} onChange={(e) => sim.setUrl(e.target.value)} aria-label="Bridge address" /></label>
         {status === 'off' || status === 'error' ? <button className="btn-primary" onClick={() => sim.connect()}><Plug className="h-4 w-4" />Connect</button> : <button className="btn-glass" onClick={() => sim.disconnect()}>Disconnect</button>}
       </Glass>
+
+      <NetworkPanel />
 
       {status === 'live' && tel ? (
         <>
@@ -102,7 +106,7 @@ export default function Live() {
             <Glass className="overflow-hidden p-0">
               <WorldMap routes={[]} airports={[]} height={440} fit={fit} wheelZoom showLabels={false}
                 lines={[...(planPts ? [{ pts: planPts, color: 'rgb(94 224 239 / .7)', dash: '4 5', width: 1.6 }] : []), ...(track.length > 1 ? [{ pts: track, color: '#ffffff', width: 2.4 }] : [])]}
-                live={{ lat: tel.lat, lon: tel.lon, hdg: tel.hdg }} />
+                live={{ lat: tel.lat, lon: tel.lon, hdg: tel.hdg }} closeZoom />
               <div className="flex flex-wrap items-center gap-4 border-t border-white/[0.06] px-4 py-2.5 text-[11.5px] text-muted">
                 <span className="flex items-center gap-1.5"><span className="h-0.5 w-5 bg-white" />Flown track</span>
                 {planPts && <span className="flex items-center gap-1.5"><span className="h-0 w-5 border-t-2 border-dashed border-live" />Filed route</span>}
@@ -188,4 +192,83 @@ export default function Live() {
       )}
     </div>
   );
+}
+
+function NetworkPanel() {
+  const net = useNet();
+  const settings = useStore((s) => s.settings);
+  const update = useStore((s) => s.updateSettings);
+  const saveFlight = useStore((s) => s.saveFlight);
+  const toast = useStore((s) => s.toast);
+  const fmt = useFmt();
+  const nav = useNavigate();
+  const [id, setId] = useState(settings.networkId);
+  const prov = settings.networkProvider as Network;
+  const on = net.status !== 'off';
+  const p = net.pilot;
+  const rec = net.rec;
+  const canSave = net.recording && (rec.landing != null || rec.phase === 'arrived') && rec.track.length > 1;
+  const track = rec.track.map((x) => [x.lon, x.lat] as [number, number]);
+  const dep = p ? findAirportRef(p.dep) : null, arr = p ? findAirportRef(p.arr) : null;
+  const planLine = dep && arr ? [[dep.lon!, dep.lat!], [arr.lon!, arr.lat!]] as [number, number][] : null;
+  const fit = p ? [...track, [p.lon, p.lat] as [number, number], ...(planLine ?? [])] : undefined;
+  async function save() {
+    const f = net.toFlight(settings);
+    const saved = await saveFlight(f, { celebrate: true });
+    net.reset();
+    nav(`/flights/${saved.id}`);
+    toast({ kind: 'success', title: `${NETWORK_LABEL[prov]} flight saved`, body: 'Built from network position reports. Check the times and add anything missing.' });
+  }
+  return (
+    <Glass className="p-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className={cx('grid h-11 w-11 place-items-center rounded-xl ring-1', net.status === 'online' ? 'bg-good/15 text-good ring-good/30' : 'bg-white/[0.05] text-muted ring-white/10')}>{net.status === 'online' ? <Wifi className="h-5 w-5" /> : <Users className="h-5 w-5" />}</div>
+        <div className="min-w-0 flex-1">
+          <div className="text-[14px] font-semibold">Online network <span className="font-normal text-muted">· VATSIM or IVAO</span></div>
+          <div className="text-[12.5px] text-muted">{net.message || 'Track your online flight from the network’s public data and log it automatically when you land.'}</div>
+        </div>
+        <Segmented label="Network" size="sm" value={prov} onChange={(v) => { update({ networkProvider: v }); if (on) net.stop(); }} options={[{ value: 'vatsim', label: 'VATSIM' }, { value: 'ivao', label: 'IVAO' }]} />
+        <input className="input mono h-9 w-[130px]" inputMode="numeric" placeholder={prov === 'vatsim' ? 'CID' : 'VID'} aria-label={prov === 'vatsim' ? 'VATSIM CID' : 'IVAO VID'} value={id} onChange={(e) => setId(e.target.value.replace(/\D/g, ''))} />
+        {on ? <button className="btn-glass" onClick={() => net.stop()}><WifiOff className="h-4 w-4" />Stop</button>
+          : <button className="btn-primary" disabled={!id} onClick={() => { update({ networkId: id }); net.start(prov, id); }}><Wifi className="h-4 w-4" />Track</button>}
+      </div>
+
+      {p && (
+        <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+          <div className="overflow-hidden rounded-xl ring-1 ring-white/[0.06]">
+            <WorldMap routes={[]} airports={[]} height={320} fit={fit} wheelZoom showLabels={false} closeZoom
+              lines={[...(planLine ? [{ pts: planLine, color: 'rgb(94 224 239 / .6)', dash: '4 5', width: 1.4 }] : []), ...(track.length > 1 ? [{ pts: track, color: '#ffffff', width: 2.4 }] : [])]}
+              live={{ lat: p.lat, lon: p.lon, hdg: p.hdg }} />
+          </div>
+          <div className="flex flex-col gap-3">
+            <div className="flex items-baseline gap-2"><span className="mono text-[22px] font-semibold text-ice">{p.callsign}</span><span className="text-[13px] text-muted">{p.aircraft}{p.rules ? ` · ${p.rules === 'I' || p.rules === 'IFR' ? 'IFR' : 'VFR'}` : ''}</span></div>
+            <div className="mono text-[15px]">{p.dep || '—'} → {p.arr || '—'}{p.altn ? <span className="text-faint"> (altn {p.altn})</span> : null}</div>
+            <div className="grid grid-cols-3 gap-2 text-center text-[12px]">
+              <div className="rounded-xl bg-white/[0.03] p-2 ring-1 ring-white/[0.06]"><div className="mono text-[15px] font-semibold">{p.altFt >= 18000 ? `FL${Math.round(p.altFt / 100)}` : `${Math.round(p.altFt)}`}</div><div className="text-muted">altitude</div></div>
+              <div className="rounded-xl bg-white/[0.03] p-2 ring-1 ring-white/[0.06]"><div className="mono text-[15px] font-semibold">{Math.round(p.gsKt)}</div><div className="text-muted">GS kt</div></div>
+              <div className="rounded-xl bg-white/[0.03] p-2 ring-1 ring-white/[0.06]"><div className="mono text-[15px] font-semibold">{String(Math.round(p.hdg)).padStart(3, '0')}°</div><div className="text-muted">heading</div></div>
+            </div>
+            {p.route && <p className="mono line-clamp-3 break-words text-[11.5px] text-muted">{p.route}</p>}
+            <div className="flex items-center gap-2 text-[12.5px]"><span className={cx('chip', net.recording && 'bg-bad/15 text-bad ring-bad/30')}>{net.recording ? 'Recording' : 'Not recording'}</span><span>{PHASE_LABEL[rec.phase]}</span><span className="ml-auto mono text-muted">{fmt.dist(rec.distNm * 1.852)}</span></div>
+            <div className="flex gap-2">
+              <button className="btn-primary flex-1" disabled={!canSave} onClick={save}><Save className="h-4 w-4" />Save flight</button>
+              {net.recording && <button className="btn-glass" onClick={() => net.reset()} aria-label="Discard network recording"><Trash2 className="h-4 w-4" /></button>}
+            </div>
+            {!canSave && <p className="text-[11.5px] text-faint">Saving unlocks after you land. Times come from 20-second position reports.</p>}
+          </div>
+        </div>
+      )}
+      {!p && canSave && (
+        <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl bg-good/[0.07] p-3 text-[13px] ring-1 ring-good/20">
+          <Check className="h-4 w-4 text-good" />Your last {NETWORK_LABEL[prov]} flight ({net.lastPilot?.callsign} {net.lastPilot?.dep}→{net.lastPilot?.arr}) is ready to log.
+          <button className="btn-primary btn-sm ml-auto" onClick={save}>Save flight</button>
+        </div>
+      )}
+    </Glass>
+  );
+}
+
+function findAirportRef(ident: string) {
+  const a = ident ? findAirport(ident) : null;
+  return a && a.lat != null && a.lon != null ? a : null;
 }
