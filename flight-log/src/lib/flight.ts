@@ -6,6 +6,12 @@ import { aircraftType } from './aircraftTypes';
 
 export const uid = (p = 'f') => `${p}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
+/** Deep copy that also works on browsers without structuredClone (iOS before 15.4). */
+export function deepClone<T>(v: T): T {
+  if (typeof structuredClone === 'function') { try { return structuredClone(v); } catch { /* fall through */ } }
+  return JSON.parse(JSON.stringify(v));
+}
+
 export function emptyFlight(s?: Partial<Settings>): Flight {
   const now = new Date().toISOString();
   const t = aircraftType(s?.defaultAircraft);

@@ -69,3 +69,9 @@ export function fmtDistanceCompact(km: number, unit: DistanceUnit): string {
   if (v >= 10_000) return `${nf1.format(v / 1000)}k`;
   return nf0.format(Math.round(v));
 }
+
+/** "1 flight", "2 flights", "1 country", "3 countries". */
+export function plural(n: number, word: string, many?: string): string {
+  const p = many ?? (word.endsWith('y') && !/[aeiou]y$/.test(word) ? word.slice(0, -1) + 'ies' : word + 's');
+  return `${typeof n === 'number' ? n.toLocaleString('en-GB') : n} ${n === 1 ? word : p}`;
+}

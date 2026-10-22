@@ -47,7 +47,7 @@ self.addEventListener('fetch', (e) => {
 
   // pages: network first
   if (req.mode === 'navigate') {
-    e.respondWith(fetch(req).then((res) => { caches.open(APP).then((c) => c.put('./index.html', res.clone())); return res; }).catch(async () => (await caches.match('./index.html')) || Response.error()));
+    e.respondWith(fetch(req).then((res) => { if (res.ok) { const copy = res.clone(); caches.open(APP).then((c) => c.put('./index.html', copy)).catch(() => {}); } return res; }).catch(async () => (await caches.match('./index.html')) || Response.error()));
     return;
   }
   // airport / airline data: stale while revalidate
@@ -66,7 +66,7 @@ self.addEventListener('fetch', (e) => {
     const hit = await c.match(req);
     if (hit) return hit;
     const res = await fetch(req);
-    if (res.ok) c.put(req, res.clone());
+    if (res.ok) c.put(req, res.clone()).catch(() => {});
     return res;
-  })());
+  })().catch(() => fetch(req)));
 });

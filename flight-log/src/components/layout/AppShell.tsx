@@ -1,3 +1,4 @@
+import { GradDefs } from '../charts/ChartKit';
 import React, { useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import * as DM from '@radix-ui/react-dropdown-menu';
@@ -258,7 +259,7 @@ function MobileNav() {
               </div>
               <div className="grid grid-cols-3 gap-2">
                 {NAV.map((n) => (
-                  <NavLink key={n.to} to={n.to} end={'end' in n ? n.end : undefined} className={({ isActive }) => cx('flex flex-col items-center gap-2 rounded-2xl p-3 text-center text-[11.5px] font-medium ring-1', isActive ? 'bg-accent/15 text-ice ring-accent/30' : 'bg-white/[0.04] text-muted ring-white/[0.06]')}>
+                  <NavLink key={n.to} to={n.to} onClick={() => setMore(false)} end={'end' in n ? n.end : undefined} className={({ isActive }) => cx('flex flex-col items-center gap-2 rounded-2xl p-3 text-center text-[11.5px] font-medium ring-1', isActive ? 'bg-accent/15 text-ice ring-accent/30' : 'bg-white/[0.04] text-muted ring-white/[0.06]')}>
                     <n.icon className="h-5 w-5" />{n.label}
                   </NavLink>
                 ))}
@@ -332,7 +333,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="relative min-h-full">
-      <div className="sky-backdrop" />
+      <div className="sky-backdrop" /><GradDefs />
       <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100] btn-primary">Skip to content</a>
       <Sidebar collapsed={collapsed} onToggle={toggle} />
       <div className={cx('relative z-10 transition-[padding] duration-300', collapsed ? 'md:pl-[84px]' : 'md:pl-[260px]')}>

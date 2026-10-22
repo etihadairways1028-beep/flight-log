@@ -78,7 +78,8 @@ export default function SettingsPage() {
 
           <Section id="appearance" title="Appearance" icon={Palette}>
             <div className={row}>{rowLabel('Theme')}<Segmented label="Theme" size="sm" value={s.theme} onChange={(v) => set({ theme: v })} options={[{ value: 'midnight', label: 'Midnight' }, { value: 'twilight', label: 'Twilight' }]} /></div>
-            <div className={row}>{rowLabel('Reduce transparency', 'Solid panels instead of glass. Easier to read, lighter on older devices.')}<Toggle checked={s.reduceTransparency} onChange={(v) => set({ reduceTransparency: v })} label="Reduce transparency" /></div>
+            <GlassControl value={s.glassLevel} disabled={s.reduceTransparency} onChange={(v) => set({ glassLevel: v })} />
+            <div className={row}>{rowLabel('Reduce transparency', 'Solid panels instead of glass. Easier to read, lighter on older devices. Overrides the glass level.')}<Toggle checked={s.reduceTransparency} onChange={(v) => set({ reduceTransparency: v })} label="Reduce transparency" /></div>
             <InstallRow />
             <p className="pb-3 text-[12px] text-faint">Motion follows your system's “reduce motion” setting automatically. Flight Log also works offline once it has loaded.</p>
           </Section>
@@ -315,6 +316,41 @@ function InstallRow() {
     <div className="flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
       <div className="min-w-0"><div className="text-[13.5px] font-medium">Install as an app</div><div className="text-[12px] text-muted">{standalone ? 'Flight Log is installed on this device.' : can ? 'Adds Flight Log to your home screen or dock, opening in its own window.' : 'On iPhone/iPad: Share → Add to Home Screen. On desktop Chrome or Edge: the install icon in the address bar.'}</div></div>
       {can && !standalone && <button className="btn-primary btn-sm" onClick={async () => { const p = (window as any).__installPrompt; if (!p) return; p.prompt(); await p.userChoice.catch(() => {}); (window as any).__installPrompt = null; setCan(false); }}>Install</button>}
+    </div>
+  );
+}
+
+const GLASS_PRESETS = [{ v: 0, label: 'Solid' }, { v: 30, label: 'Frosted' }, { v: 55, label: 'Glass' }, { v: 85, label: 'Liquid' }];
+function GlassControl({ value, onChange, disabled }: { value: number; onChange: (v: number) => void; disabled: boolean }) {
+  const name = value <= 12 ? 'Solid' : value <= 40 ? 'Frosted' : value <= 70 ? 'Glass' : 'Liquid';
+  return (
+    <div className={cx('flex flex-col gap-3 border-b border-white/[0.06] py-4 last:border-0', disabled && 'pointer-events-none opacity-40')}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-[14px] font-medium">Liquid glass</div>
+          <div className="text-[12.5px] text-muted">How see-through and blurred the panels are. Changes apply instantly.</div>
+        </div>
+        <div className="flex gap-1">
+          {GLASS_PRESETS.map((p) => (
+            <button key={p.v} type="button" onClick={() => onChange(p.v)} className={cx('rounded-lg px-2.5 py-1 text-[12px] ring-1 transition', name === p.label ? 'bg-accent/20 text-ice ring-accent/40' : 'bg-white/[0.04] text-muted ring-white/10 hover:text-fg')}>{p.label}</button>
+          ))}
+        </div>
+      </div>
+      <div className="flex items-center gap-3">
+        <span className="text-[11px] text-faint">Solid</span>
+        <input type="range" min={0} max={100} step={1} value={value} onChange={(e) => onChange(Number(e.target.value))} className="flex-1 accent-[rgb(59,130,246)]" aria-label="Glass level" />
+        <span className="text-[11px] text-faint">Liquid</span>
+        <span className="mono w-10 text-right text-[12px] text-muted">{value}%</span>
+      </div>
+      <div className="relative h-28 overflow-hidden rounded-xl2" aria-hidden>
+        <div className="absolute inset-0" style={{ background: 'radial-gradient(circle at 22% 40%, #3b82f6 0, transparent 38%), radial-gradient(circle at 70% 65%, #22d3ee 0, transparent 34%), radial-gradient(circle at 85% 20%, #a78bfa 0, transparent 30%), #0b1426' }} />
+        <div className="absolute left-[18%] top-[20%] h-10 w-10 rounded-full bg-white/80" />
+        <div className="absolute right-[22%] bottom-[14%] font-mono text-[28px] font-bold text-white/90">FL370</div>
+        <div className="glass absolute inset-x-6 inset-y-5 flex items-center justify-between px-5">
+          <div><div className="text-[11px] text-muted">Preview</div><div className="text-[17px] font-semibold">{name} · {value}%</div></div>
+          <div className="mono text-[13px] text-ice">AUH → DOH</div>
+        </div>
+      </div>
     </div>
   );
 }

@@ -5,7 +5,7 @@ import { Upload, MapPin, GraduationCap, ChevronDown, Clock, Plane, Route as Rout
 import { useStore } from '../../store/useStore';
 import { Dialog, Field, Segmented, Stars, Tip, cx } from '../ui';
 import { AirportPicker, AircraftTypePicker, AirlineInput } from './Pickers';
-import { emptyFlight, finalizeFlight, missingFields } from '../../lib/flight';
+import { emptyFlight, finalizeFlight, missingFields, deepClone } from '../../lib/flight';
 import type { Flight, FlightCategory, FlightRole, FlightStatus, FlightTimes } from '../../lib/types';
 import { CATEGORY_LABEL, ROLE_LABEL, STATUS_LABEL, PILOT_FIELDS, emptyPilot } from '../../lib/types';
 import { estimateNightMinutes } from '../../lib/pilot';
@@ -127,7 +127,7 @@ export function FlightForm() {
     loadAirlines();
     let base: Flight;
     if (form.flight) {
-      base = structuredClone(form.flight);
+      base = deepClone(form.flight);
       if (form.mode === 'duplicate') {
         base.id = emptyFlight().id;
         base.source = 'duplicate';
@@ -319,7 +319,7 @@ export function FlightForm() {
       if (form.mode === 'edit') { sound.success(); toast({ kind: 'success', title: 'Flight updated', body: 'Every total and chart has been recalculated.' }); }
       else if (status === 'draft') toast({ kind: 'info', title: 'Saved as incomplete', body: 'Add a flight or block time later to complete it.' });
       else if (status === 'planned') { sound.success(); toast({ kind: 'success', title: 'Planned flight saved' }); }
-      if (form.mode !== 'edit') nav(`/flights/${saved.id}`);
+      if (form.mode !== 'edit') nav(`/flights/${saved.id}${status === 'completed' || status === 'diverted' ? '?debrief=1' : ''}`);
     } catch (e) {
       toast({ kind: 'error', title: 'Could not save', body: (e as Error).message });
     } finally {

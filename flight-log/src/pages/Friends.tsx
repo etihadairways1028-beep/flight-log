@@ -15,6 +15,7 @@ import { Glass, PageHeader, EmptyState, ConfirmDialog, cx } from '../components/
 import { WorldMap, type MapRoute, type MapAirport } from '../components/map/WorldMap';
 import * as cloud from '../lib/cloud';
 import type { Flight, Friend, PublicProfile, Settings } from '../lib/types';
+import { plural } from '../lib/units';
 
 // ─── building, encoding and validating profiles ─────────────────────────────
 export function buildProfile(flights: Flight[], s: Settings): PublicProfile {
@@ -285,7 +286,7 @@ export default function FriendsPage() {
                   <li key={f.id}>
                     <button className={cx('flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition hover:bg-white/[0.05]', sel === f.id && 'bg-white/[0.07]')} onClick={() => setSel(sel === f.id ? null : f.id)}>
                       <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-live/60 to-[#1e3a6e] text-[13px] font-semibold">{f.name.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase()}</div>
-                      <div className="min-w-0 flex-1"><div className="truncate text-[13.5px] font-medium">{f.name}{f.handle && <span className="mono ml-1.5 text-[12px] text-ice">@{f.handle}</span>}</div><div className="text-[12px] text-muted">{f.profile.totals.flights} flights · {Math.round(f.profile.totals.minutes / 60)} h · {f.profile.totals.countries} countries</div></div>
+                      <div className="min-w-0 flex-1"><div className="truncate text-[13.5px] font-medium">{f.name}{f.handle && <span className="mono ml-1.5 text-[12px] text-ice">@{f.handle}</span>}</div><div className="text-[12px] text-muted">{plural(f.profile.totals.flights, 'flight')} · {Math.round(f.profile.totals.minutes / 60)} h · {plural(f.profile.totals.countries, 'country')}</div></div>
                       {sel === f.id && <Check className="h-4 w-4 text-ice" />}
                     </button>
                   </li>

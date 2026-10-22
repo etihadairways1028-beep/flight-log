@@ -201,35 +201,107 @@ export function pctChange(a: number, b: number): number | null {
   return ((a - b) / b) * 100;
 }
 
+/** Best guess at when a flight happened, for ordering flights on the same day. */
+export function flightMoment(f: Flight): number | null {
+  for (const v of [f.times.offBlock, f.times.takeoff, f.times.landing, f.times.onBlock, f.times.schedOut]) {
+    if (!v) continue;
+    const t = Date.parse(v);
+    if (!Number.isNaN(t)) return t;
+  }
+  return null;
+}
+/** Newest first: by date, then by actual time when both are known, then by when the entry was saved. */
 export function sortByDateDesc(flights: Flight[]): Flight[] {
-  return [...flights].sort((a, b) => (b.date + (b.times.offBlock ?? b.times.takeoff ?? '')).localeCompare(a.date + (a.times.offBlock ?? a.times.takeoff ?? '')));
+  return [...flights].sort((a, b) => {
+    const d = b.date.localeCompare(a.date);
+    if (d) return d;
+    const ta = flightMoment(a), tb = flightMoment(b);
+    if (ta != null && tb != null && ta !== tb) return tb - ta;
+    return (b.createdAt ?? '').localeCompare(a.createdAt ?? '');
+  });
+}
+
+// ─── Logbook check: entries that look like the same flight twice ────────────
+export interface DupGroup { key: string; flights: Flight[] }
+const dayNum = (d: string) => Math.round(Date.parse(d + 'T00:00:00Z') / 86400000);
+/** Counted flights with the same departure and arrival within a day of each other. */
+export function findDuplicates(all: Flight[]): DupGroup[] {
+  const byRoute = new Map<string, Flight[]>();
+  for (const f of all) {
+    if (!isCounted(f) || !f.dep?.ident || !f.arr?.ident || !f.date) continue;
+    const k = `${f.dep.ident}>${f.arr.ident}`;
+    byRoute.set(k, [...(byRoute.get(k) ?? []), f]);
+  }
+  const out: DupGroup[] = [];
+  for (const [k, fs] of byRoute) {
+    if (fs.length < 2) continue;
+    const sorted = [...fs].sort((a, b) => a.date.localeCompare(b.date));
+    let cur: Flight[] = [sorted[0]];
+    const flush = () => { if (cur.length > 1) out.push({ key: `${k}@${cur.map((x) => x.id).sort().join(',')}`, flights: sortByDateDesc(cur) }); };
+    for (const f of sorted.slice(1)) {
+      const prev = cur[cur.length - 1];
+      const ta = flightMoment(prev), tb = flightMoment(f);
+      // same day (±1 for time zones); if both have real times they must also be within 6 hours
+      const near = Math.abs(dayNum(f.date) - dayNum(prev.date)) <= 1 && (ta == null || tb == null || Math.abs(ta - tb) < 6 * 3600e3);
+      if (near) cur.push(f); else { flush(); cur = [f]; }
+    }
+    flush();
+  }
+  return out;
+}
+
+// ─── Month comparison ────────────────────────────────────────────────────────
+export interface MonthCompare { month: string; prev: string; cur: MonthPoint; last: MonthPoint; avg: { flights: number; minutes: number; distanceKm: number }; best: MonthPoint | null; months: MonthPoint[] }
+/** This month against last month and the average of the 12 months before it. */
+export function compareMonths(all: Flight[], now: DT = DT.local()): MonthCompare {
+  const to = now.toFormat('yyyy-MM'), from = now.minus({ months: 12 }).toFormat('yyyy-MM');
+  const months = monthly(all, from, to);
+  const cur = months[months.length - 1], last = months[months.length - 2];
+  const hist = months.slice(0, -1).filter((m) => m.flights > 0);
+  const n = Math.max(1, hist.length);
+  const avg = { flights: hist.reduce((a, m) => a + m.flights, 0) / n, minutes: hist.reduce((a, m) => a + m.minutes, 0) / n, distanceKm: hist.reduce((a, m) => a + m.distanceKm, 0) / n };
+  const best = [...months].sort((a, b) => b.minutes - a.minutes)[0];
+  return { month: to, prev: last.month, cur, last, avg, best: best && best.minutes > 0 ? best : null, months };
 }
 
 // ─── Goals and streaks ──────────────────────────────────────────────────────
 import type { Goals } from './types';
 import { DateTime as DT } from 'luxon';
 
-export interface Streaks { months: number; monthsBest: number; monthAtRisk: boolean; weeks: number; weeksBest: number; weekAtRisk: boolean }
+export interface StreakRun { current: number; best: number; atRisk: boolean; activeNow: boolean }
+export interface Streaks { days: StreakRun; weeks: StreakRun; months: StreakRun; lastDate: string | null }
 
-/** Consecutive calendar months / ISO weeks with at least one completed flight. */
+/** Longest and current run of consecutive integers in a set (days, ISO weeks or months as numbers). */
+function runs(nums: Set<number>, nowIdx: number): StreakRun {
+  const sorted = [...nums].filter((n) => n <= nowIdx).sort((a, b) => a - b);
+  let best = 0, len = 0, prev = NaN;
+  for (const n of sorted) { len = n === prev + 1 ? len + 1 : 1; prev = n; best = Math.max(best, len); }
+  const activeNow = nums.has(nowIdx);
+  // a run is still alive if it reaches this period, or the one before (you still have time to extend it)
+  let cur = 0, k = activeNow ? nowIdx : nowIdx - 1;
+  while (nums.has(k)) { cur++; k--; }
+  return { current: cur, best: Math.max(best, cur), atRisk: !activeNow && cur > 0, activeNow };
+}
+
+/**
+ * Flying streaks by day, ISO week (Monday start) and calendar month, from the local departure
+ * date of every counted flight. Flights dated after today never extend a streak.
+ */
 export function streaks(all: Flight[], now: DT = DT.local()): Streaks {
-  const fs = all.filter((f) => f.status === 'completed' || f.status === 'diverted');
-  const months = new Set(fs.map((f) => f.date.slice(0, 7)));
-  const weeks = new Set(fs.map((f) => { const d = DT.fromISO(f.date); return d.isValid ? `${d.weekYear}-${d.weekNumber}` : ''; }));
-  const run = (has: (d: DT) => boolean, start: DT, step: 'months' | 'weeks') => {
-    let n = 0, d = start;
-    while (has(d) && n < 1200) { n++; d = d.minus({ [step]: 1 }); }
-    return n;
+  const today = now.toISODate()!;
+  const dates = [...new Set(all.filter((f) => isCounted(f) && /^\d{4}-\d{2}-\d{2}$/.test(f.date) && f.date <= today).map((f) => f.date))];
+  const dayIdx = (iso: string) => Math.round(Date.parse(iso + 'T00:00:00Z') / 86400000);
+  // 1970-01-05 was a Monday: day index 4
+  const weekIdx = (d: number) => Math.floor((d - 4) / 7);
+  const monthIdx = (iso: string) => Number(iso.slice(0, 4)) * 12 + Number(iso.slice(5, 7)) - 1;
+  const days = new Set(dates.map(dayIdx));
+  const t = dayIdx(today);
+  return {
+    days: runs(days, t),
+    weeks: runs(new Set([...days].map(weekIdx)), weekIdx(t)),
+    months: runs(new Set(dates.map(monthIdx)), monthIdx(today)),
+    lastDate: dates.sort().pop() ?? null,
   };
-  const mKey = (d: DT) => d.toFormat('yyyy-MM'), wKey = (d: DT) => `${d.weekYear}-${d.weekNumber}`;
-  const mNow = months.has(mKey(now)), wNow = weeks.has(wKey(now));
-  // runs counted forwards from their start: walk forward instead of back
-  const fwd = (set: Set<string>, key: (d: DT) => string, start: DT, step: 'months' | 'weeks') => { let n = 0, d = start; while (set.has(key(d)) && n < 1200) { n++; d = d.plus({ [step]: 1 }); } return n; };
-  const bestM = Math.max(0, ...[...months].map((k) => DT.fromFormat(k, 'yyyy-MM')).filter((d) => d.isValid && !months.has(mKey(d.minus({ months: 1 })))).map((d) => fwd(months, mKey, d, 'months')));
-  const bestW = Math.max(0, ...[...weeks].filter(Boolean).map((k) => DT.fromObject({ weekYear: +k.split('-')[0], weekNumber: +k.split('-')[1] })).filter((d) => d.isValid && !weeks.has(wKey(d.minus({ weeks: 1 })))).map((d) => fwd(weeks, wKey, d, 'weeks')));
-  const curM = run((d) => months.has(mKey(d)), mNow ? now : now.minus({ months: 1 }), 'months');
-  const curW = run((d) => weeks.has(wKey(d)), wNow ? now : now.minus({ weeks: 1 }), 'weeks');
-  return { months: curM, monthsBest: Math.max(bestM, curM), monthAtRisk: !mNow && curM > 0, weeks: curW, weeksBest: Math.max(bestW, curW), weekAtRisk: !wNow && curW > 0 };
 }
 
 export interface GoalProgress { key: keyof Goals; label: string; target: number; value: number; unit: 'flights' | 'hours' | 'airports'; pace: number | null }
@@ -251,3 +323,82 @@ export function goalProgress(all: Flight[], goals: Goals, now: DT = DT.local()):
   push('yearNewAirports', `New airports in ${y}`, newAp.size, 'airports', yFrac);
   return out;
 }
+
+// ─── Post-flight debrief ────────────────────────────────────────────────────
+import { countryName } from './airports';
+import { landingRating } from './recorder';
+import { DateTime } from 'luxon';
+export interface Debrief {
+  number: number;                       // nth counted flight
+  firsts: { label: string; detail: string }[];
+  records: { label: string; detail: string }[];
+  plan: { label: string; planned: string; actual: string; diff: string | null; tone: 'good' | 'ok' | 'warn' }[];
+  landing: { fpm: number; label: string; tone: string; rank: string | null } | null;
+  month: { label: string; flights: number; minutes: number; lastLabel: string; lastFlights: number; lastMinutes: number; avgMinutes: number };
+  goals: GoalProgress[];
+}
+
+const signed = (n: number, unit: string) => `${n > 0 ? '+' : n < 0 ? '−' : '±'}${Math.abs(Math.round(n))} ${unit}`;
+
+/** Everything worth telling the pilot right after a flight, from their own records only. */
+export function buildDebrief(f: Flight, all: Flight[], goals: Goals, now: DateTime = DateTime.local()): Debrief {
+  const counted = sortByDateDesc(all.filter(isCounted));
+  const idx = counted.findIndex((x) => x.id === f.id);
+  const before = idx >= 0 ? counted.slice(idx + 1) : counted.filter((x) => x.id !== f.id && x.date <= f.date);
+  const number = before.length + 1;
+  const firsts: Debrief['firsts'] = [];
+  const records: Debrief['records'] = [];
+  if (before.length) {
+    const aps = new Set(before.flatMap((x) => [x.dep?.ident, x.arr?.ident]));
+    const ctry = new Set(before.flatMap((x) => [x.dep?.country, x.arr?.country]));
+    for (const a of [f.dep, f.arr]) if (a && !aps.has(a.ident)) { firsts.push({ label: 'New airport', detail: `${a.iata || a.ident} · ${a.city || a.name}` }); aps.add(a.ident); }
+    for (const a of [f.dep, f.arr]) if (a?.country && !ctry.has(a.country)) { firsts.push({ label: 'New country', detail: countryName(a.country) || a.country }); ctry.add(a.country); }
+    const tk = typeKey(f);
+    if (tk && tk !== 'UNKNOWN' && !before.some((x) => typeKey(x) === tk)) firsts.push({ label: 'New aircraft type', detail: tk });
+    const rk = routeKey(f);
+    if (rk && !before.some((x) => routeKey(x) === rk)) firsts.push({ label: 'New route', detail: rk });
+    const d = durationOf(f);
+    const longest = Math.max(0, ...before.map((x) => durationOf(x) ?? 0));
+    if (d && d > longest) records.push({ label: 'Longest flight yet', detail: `${Math.round((d - longest))} min longer than your previous best` });
+    const km = f.distanceKm ?? 0, far = Math.max(0, ...before.map((x) => x.distanceKm ?? 0));
+    if (km && km > far && far > 0) records.push({ label: 'Furthest flight yet', detail: `${Math.round(km).toLocaleString('en-GB')} km` });
+  } else firsts.push({ label: 'First flight in your logbook', detail: 'Everything starts here.' });
+
+  // plan vs actual
+  const plan: Debrief['plan'] = [];
+  const fp = f.flightPlan;
+  const dur = f.flightMinutes;
+  if (fp?.plannedEteMin && dur) {
+    const diff = dur - fp.plannedEteMin;
+    plan.push({ label: 'Flight time', planned: hm(fp.plannedEteMin), actual: hm(dur), diff: signed(diff, 'min'), tone: Math.abs(diff) <= 10 ? 'good' : Math.abs(diff) <= 25 ? 'ok' : 'warn' });
+  }
+  if (fp?.routeDistanceNm && f.recordedDistanceKm) {
+    const flown = f.recordedDistanceKm / 1.852, diff = flown - fp.routeDistanceNm;
+    plan.push({ label: 'Distance', planned: `${Math.round(fp.routeDistanceNm)} nm`, actual: `${Math.round(flown)} nm`, diff: signed(diff, 'nm'), tone: Math.abs(diff) / fp.routeDistanceNm < 0.05 ? 'good' : Math.abs(diff) / fp.routeDistanceNm < 0.12 ? 'ok' : 'warn' });
+  }
+  const planFl = fp?.cruiseFl ? Number(String(fp.cruiseFl).replace(/\D/g, '')) : (fp?.initialAltFt ? fp.initialAltFt / 100 : 0);
+  if (planFl && f.cruiseAltitudeFt) {
+    const act = Math.round(f.cruiseAltitudeFt / 100), diff = (act - planFl) * 100;
+    plan.push({ label: 'Cruise level', planned: `FL${String(planFl).padStart(3, '0')}`, actual: `FL${String(act).padStart(3, '0')}`, diff: signed(diff, 'ft'), tone: Math.abs(diff) <= 1000 ? 'good' : 'ok' });
+  }
+  const sched = (a: string | null, b: string | null) => (a && b ? Math.round((Date.parse(b) - Date.parse(a)) / 60000) : null);
+  const dd = sched(f.times.schedOut, f.times.offBlock), ad = sched(f.times.schedIn, f.times.onBlock);
+  if (dd != null) plan.push({ label: 'Departure', planned: 'Scheduled', actual: dd <= 0 ? 'On time' : `${dd} min late`, diff: signed(dd, 'min'), tone: dd <= 5 ? 'good' : dd <= 20 ? 'ok' : 'warn' });
+  if (ad != null) plan.push({ label: 'Arrival', planned: 'Scheduled', actual: ad <= 0 ? `${-ad} min early` : `${ad} min late`, diff: signed(ad, 'min'), tone: ad <= 5 ? 'good' : ad <= 20 ? 'ok' : 'warn' });
+
+  // landing
+  let landing: Debrief['landing'] = null;
+  if (f.landingRateFpm != null) {
+    const r = landingRating(f.landingRateFpm)!;
+    const others = before.map((x) => x.landingRateFpm).filter((v): v is number => v != null).map(Math.abs);
+    const better = others.filter((v) => v < Math.abs(f.landingRateFpm!)).length;
+    const rank = others.length ? (better === 0 ? 'Your softest landing on record' : `Softer than ${others.length - better} of your ${others.length} other recorded landings`) : null;
+    landing = { fpm: Math.round(f.landingRateFpm), label: r.label, tone: r.tone, rank };
+  }
+
+  const mc = compareMonths(all, DateTime.fromISO(f.date).isValid && f.date.slice(0, 7) !== now.toFormat('yyyy-MM') ? DateTime.fromISO(f.date) : now);
+  const month = { label: DateTime.fromISO(mc.month + '-01').toFormat('LLLL'), flights: mc.cur.flights, minutes: mc.cur.minutes, lastLabel: DateTime.fromISO(mc.prev + '-01').toFormat('LLLL'), lastFlights: mc.last.flights, lastMinutes: mc.last.minutes, avgMinutes: mc.avg.minutes };
+  return { number, firsts, records, plan, landing, month, goals: goalProgress(all, goals, now) };
+}
+
+function hm(m: number) { const h = Math.floor(m / 60), mm = Math.round(m % 60); return `${h}h ${String(mm).padStart(2, '0')}m`; }

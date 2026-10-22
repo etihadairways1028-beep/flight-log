@@ -247,6 +247,8 @@ export interface Settings {
   durationFormat: 'hm' | 'decimal';
   theme: 'midnight' | 'twilight';
   reduceTransparency: boolean;
+  /** How glassy panels look, 0 (nearly solid) to 100 (very clear liquid glass). */
+  glassLevel: number;
   defaultCategory: FlightCategory;
   defaultAircraft: string;         // ICAO type code
   defaultSimulator: string;

@@ -13,6 +13,7 @@ import { RankBars, ChartCard } from '../components/charts/ChartKit';
 import { FlightCard } from '../components/flight/FlightBits';
 import { WorldMap, buildMapData } from '../components/map/WorldMap';
 import type { AirportRef } from '../lib/types';
+import { plural } from '../lib/units';
 
 export default function AirportDetail() {
   const { ident = '' } = useParams();
@@ -90,7 +91,7 @@ export default function AirportDetail() {
         {related.length ? (
           <>
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{sortByDateDesc(related).slice(0, 12).map((f) => <FlightCard key={f.id} f={f} />)}</div>
-            {related.length > 12 && <Link to={`/flights?airport=${a.ident}`} className="btn-glass mt-4">All {related.length} flights</Link>}
+            {related.length > 12 && <Link to={`/flights?airport=${a.ident}`} className="btn-glass mt-4">All {plural(related.length, 'flight')}</Link>}
           </>
         ) : <p className="text-[13px] text-muted">You haven't logged a flight here yet.</p>}
       </div>
