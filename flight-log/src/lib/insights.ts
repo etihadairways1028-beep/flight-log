@@ -4,6 +4,7 @@ import { aircraftLabel, isCounted, routeKey, typeKey } from './flight';
 import { fmtDurationLong, monthLabel, monthKey } from './time';
 import { fmtDistance } from './units';
 import { DateTime } from 'luxon';
+import { plural } from './units';
 
 export interface Insight {
   id: string;
@@ -27,7 +28,7 @@ export function generateInsights(all: Flight[], s: Settings, now = DateTime.loca
   if (busiest && busiest.flights >= 2 && months.length >= 2) {
     out.push({
       id: 'busiest-month', title: `Your busiest month was ${monthLabel(busiest.month, true)}.`,
-      detail: `${busiest.flights} flights${busiest.minutes ? ` and ${fmtDurationLong(busiest.minutes)} of flight time` : ''}.`,
+      detail: `${plural(busiest.flights, 'flight')}${busiest.minutes ? ` and ${fmtDurationLong(busiest.minutes)} of flight time` : ''}.`,
       how: 'Counted completed, diverted and incomplete flights per calendar month (departure date).', tone: 'neutral', href: '/analytics?tab=time',
     });
   }
@@ -52,7 +53,7 @@ export function generateInsights(all: Flight[], s: Settings, now = DateTime.loca
   if (types[0] && types[0].flights >= 2) {
     out.push({
       id: 'top-aircraft', title: `Your most frequently flown aircraft is the ${types[0].label}.`,
-      detail: `${types[0].flights} of ${flights.length} flights (${Math.round((types[0].flights / flights.length) * 100)}%).`,
+      detail: `${types[0].flights} of ${plural(flights.length, 'flight')} (${Math.round((types[0].flights / flights.length) * 100)}%).`,
       how: 'Grouped by ICAO type designator; ranked by number of flights.', tone: 'neutral', href: '/aircraft',
     });
   }
@@ -104,7 +105,7 @@ export function generateInsights(all: Flight[], s: Settings, now = DateTime.loca
     const d = ytd.length - lastYtd.length;
     if (d !== 0) out.push({
       id: 'yoy', title: `${Math.abs(d)} ${d > 0 ? 'more' : 'fewer'} flights than this time last year.`,
-      detail: `${ytd.length} flights in ${thisYear} to date versus ${lastYtd.length} by the same date in ${thisYear - 1}.`,
+      detail: `${plural(ytd.length, 'flight')} in ${thisYear} to date versus ${lastYtd.length} by the same date in ${thisYear - 1}.`,
       how: 'Year-to-date flight counts, comparing the same calendar span.', tone: d > 0 ? 'up' : 'down',
     });
   }

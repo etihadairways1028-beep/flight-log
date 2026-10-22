@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Radio, Plug, PlugZap, Download, Circle, Square, Save, Trash2, Gauge, Mountain, Compass, ArrowUpDown, Wind, Plane, Send, Check, AlertTriangle, Monitor } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { useSim } from '../lib/simLink';
-import { PHASE_LABEL, landingRating, recordingToFlight, nearestAirport } from '../lib/recorder';
+import { PHASE_LABEL, landingRating, recordingToFlight, nearestAirport, findMatchingFlight, recordingDate } from '../lib/recorder';
 import { Glass, PageHeader, Segmented, Toggle, cx, Tip } from '../components/ui';
 import { WorldMap } from '../components/map/WorldMap';
 import { useFmt } from '../lib/useFmt';
@@ -44,11 +44,15 @@ export default function Live() {
 
   const canSave = sim.recording && (rec.landing != null || rec.phase === 'arrived') && rec.track.length > 1;
   async function save() {
-    const f = recordingToFlight(rec, settings, linked);
+    const first = rec.track[0], lastP = rec.track[rec.track.length - 1];
+    const depId = first ? nearestAirport(first.lat, first.lon)?.ident : null;
+    const arrId = lastP ? nearestAirport(lastP.lat, lastP.lon)?.ident : null;
+    const base = linked ?? findMatchingFlight(flights, depId, arrId, recordingDate(rec));
+    const f = recordingToFlight(rec, settings, base);
     const saved = await saveFlight(f, { celebrate: true });
     sim.resetRecording();
-    nav(`/flights/${saved.id}`);
-    toast({ kind: 'success', title: 'Recorded flight saved', body: 'Airports, times, distance, track and landings were filled in from the sim. Edit anything that needs correcting.' });
+    nav(`/flights/${saved.id}?debrief=1`);
+    toast({ kind: 'success', title: base && !linked ? 'Recording added to your existing entry' : 'Recorded flight saved', body: base && !linked ? `You'd already logged ${depId} → ${arrId ?? '—'} for this day, so the track, times and landing went into that entry instead of a second copy.` : 'Airports, times, distance, track and landings were filled in from the sim. Edit anything that needs correcting.' });
   }
   async function sendPlan() {
     if (!linked?.flightPlan || !sim.hello) return;
@@ -59,7 +63,7 @@ export default function Live() {
     toast({ kind: r.ok ? 'success' : 'error', title: r.ok ? (r.loaded ? 'Plan loaded into MSFS' : 'Plan saved for the sim') : 'Couldn’t send the plan', body: r.message });
   }
 
-  const track = rec.track.map((p) => [p.lon, p.lat] as [number, number]);
+  const track = [...rec.track.map((p) => [p.lon, p.lat] as [number, number]), ...(tel && sim.recording ? [[tel.lon, tel.lat] as [number, number]] : [])];
   const planPts = linked ? plannedPath(linked) ?? bestPath(linked)?.pts ?? null : null;
   const fit = track.length > 1 ? [...track, ...(tel ? [[tel.lon, tel.lat] as [number, number]] : [])] : tel ? [[tel.lon, tel.lat] as [number, number]] : planPts ?? undefined;
   const lr = landingRating(rec.landingVs);
@@ -199,6 +203,7 @@ function NetworkPanel() {
   const settings = useStore((s) => s.settings);
   const update = useStore((s) => s.updateSettings);
   const saveFlight = useStore((s) => s.saveFlight);
+  const flights = useStore((s) => s.data.flights);
   const toast = useStore((s) => s.toast);
   const fmt = useFmt();
   const nav = useNavigate();
@@ -208,15 +213,17 @@ function NetworkPanel() {
   const p = net.pilot;
   const rec = net.rec;
   const canSave = net.recording && (rec.landing != null || rec.phase === 'arrived') && rec.track.length > 1;
-  const track = rec.track.map((x) => [x.lon, x.lat] as [number, number]);
+  const track = [...rec.track.map((x) => [x.lon, x.lat] as [number, number]), ...(net.pilot && net.recording ? [[net.pilot.lon, net.pilot.lat] as [number, number]] : [])];
   const dep = p ? findAirportRef(p.dep) : null, arr = p ? findAirportRef(p.arr) : null;
   const planLine = dep && arr ? [[dep.lon!, dep.lat!], [arr.lon!, arr.lat!]] as [number, number][] : null;
   const fit = p ? [...track, [p.lon, p.lat] as [number, number], ...(planLine ?? [])] : undefined;
   async function save() {
-    const f = net.toFlight(settings);
+    const rf = net.toFlight(settings);
+    const m = findMatchingFlight(flights, rf.dep?.ident, rf.arr?.ident, rf.date);
+    const f = m ? { ...rf, id: m.id, createdAt: m.createdAt, flightPlan: m.flightPlan ?? rf.flightPlan, aircraft: m.aircraft.typeCode ? m.aircraft : rf.aircraft, airline: m.airline || rf.airline, flightNumber: m.flightNumber || rf.flightNumber, notes: [m.notes, rf.notes].filter(Boolean).join('\n'), photos: m.photos, rating: m.rating, tags: [...new Set([...(m.tags ?? []), ...rf.tags])] } : rf;
     const saved = await saveFlight(f, { celebrate: true });
     net.reset();
-    nav(`/flights/${saved.id}`);
+    nav(`/flights/${saved.id}?debrief=1`);
     toast({ kind: 'success', title: `${NETWORK_LABEL[prov]} flight saved`, body: 'Built from network position reports. Check the times and add anything missing.' });
   }
   return (

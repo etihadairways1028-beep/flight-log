@@ -1,4 +1,4 @@
-import React, { Suspense, useEffect } from 'react';
+import React, { Suspense, useEffect, useState } from 'react';
 import { Route, Routes, useLocation } from 'react-router-dom';
 import { ErrorBoundary, lazyPage } from './components/ErrorBoundary';
 import { useStore } from './store/useStore';
@@ -27,8 +27,16 @@ const SettingsPage = lazyPage(() => import('./pages/Settings'));
 const NotFound = lazyPage(() => import('./pages/NotFound'));
 
 function PageSkeleton() {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => { const t = setTimeout(() => setSlow(true), 8000); return () => clearTimeout(t); }, []);
   return (
     <div className="flex flex-col gap-4" aria-busy="true" aria-label="Loading">
+      {slow && (
+        <div className="glass flex flex-wrap items-center gap-3 rounded-xl2 p-4 text-[13px]">
+          <span className="min-w-0 flex-1 text-muted">This page is taking longer than usual to load. A slow connection or an old cached version can cause this.</span>
+          <button className="btn-primary btn-sm" onClick={() => location.reload()}>Reload</button>
+        </div>
+      )}
       <Skeleton className="h-10 w-72" />
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-28 rounded-xl2" />)}</div>
       <Skeleton className="h-80 rounded-xl2" />
@@ -72,7 +80,9 @@ export default function App() {
   const authStatus = useStore((s) => s.auth.status);
   const theme = useStore((s) => s.settings.theme);
   const reduceT = useStore((s) => s.settings.reduceTransparency);
+  const glass = useStore((s) => s.settings.glassLevel);
   useEffect(() => { init(); }, [init]);
+  useEffect(() => { applyGlass(glass); }, [glass]);
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     document.documentElement.dataset.transparency = reduceT ? 'reduced' : 'full';
@@ -111,4 +121,16 @@ export default function App() {
       <AccountDialogs />
     </AppShell>
   );
+}
+
+/** Map the 0–100 glass setting onto the CSS variables every glass panel uses. */
+export function applyGlass(level: number) {
+  const l = Math.min(100, Math.max(0, Number.isFinite(level) ? level : 55)) / 100;
+  const r = document.documentElement.style;
+  r.setProperty('--glass-a', (0.94 - 0.62 * l).toFixed(3));          // 0.94 solid → 0.32 clear
+  r.setProperty('--glass-a-strong', (0.97 - 0.32 * l).toFixed(3));   // dialogs stay readable
+  r.setProperty('--glass-blur', `${Math.round(4 + 36 * l)}px`);
+  r.setProperty('--glass-sat', `${Math.round(105 + 85 * l)}%`);
+  r.setProperty('--glass-sheen', (0.02 + 0.09 * l).toFixed(3));
+  r.setProperty('--glass-edge', (0.06 + 0.3 * l).toFixed(3));
 }

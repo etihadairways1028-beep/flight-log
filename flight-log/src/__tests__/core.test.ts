@@ -444,16 +444,28 @@ import { streaks, goalProgress } from '../lib/stats';
 import { DateTime as LDT } from 'luxon';
 describe('goals and streaks', () => {
   const mk = (date: string) => ({ ...emptyFlight(), date, status: 'completed', flightMinutes: 60 } as any);
-  it('counts month and week streaks', () => {
+  it('counts day, week and month streaks', () => {
     const now = LDT.fromISO('2026-10-21');
     const s = streaks([mk('2026-08-03'), mk('2026-09-10'), mk('2026-10-02'), mk('2026-03-01'), mk('2026-04-01'), mk('2026-05-01'), mk('2026-06-01')], now);
-    expect(s.months).toBe(3);
-    expect(s.monthsBest).toBe(4);
-    expect(s.monthAtRisk).toBe(false);
+    expect(s.months.current).toBe(3);
+    expect(s.months.best).toBe(4);
+    expect(s.months.atRisk).toBe(false);
     const s2 = streaks([mk('2026-08-03'), mk('2026-09-10')], now);
-    expect(s2.months).toBe(2);
-    expect(s2.monthAtRisk).toBe(true);
-    expect(streaks([mk('2026-10-19'), mk('2026-10-14'), mk('2026-10-06')], now).weeks).toBe(3);
+    expect(s2.months.current).toBe(2);
+    expect(s2.months.atRisk).toBe(true);
+    // 2026-10-19 is a Monday: weeks of 19th, 12th and 5th
+    expect(streaks([mk('2026-10-19'), mk('2026-10-14'), mk('2026-10-06')], now).weeks.current).toBe(3);
+    // Sunday 18th and Monday 19th are different ISO weeks
+    expect(streaks([mk('2026-10-18'), mk('2026-10-19')], now).weeks.current).toBe(2);
+    const d = streaks([mk('2026-10-21'), mk('2026-10-20'), mk('2026-10-19'), mk('2026-10-17'), mk('2026-10-16')], now);
+    expect(d.days.current).toBe(3); expect(d.days.best).toBe(3); expect(d.days.atRisk).toBe(false);
+    const y = streaks([mk('2026-10-20'), mk('2026-10-19')], now);
+    expect(y.days.current).toBe(2); expect(y.days.atRisk).toBe(true);
+    // duplicates on one day count once; future-dated and planned flights never count
+    const dup = streaks([mk('2026-10-21'), mk('2026-10-21'), mk('2026-10-22'), { ...mk('2026-10-20'), status: 'planned' }], now);
+    expect(dup.days.current).toBe(1);
+    expect(streaks([mk('2026-10-25')], now).days.current).toBe(0);
+    expect(streaks([], now).months.current).toBe(0);
   });
   it('measures goal progress', () => {
     const now = LDT.fromISO('2026-10-21');
@@ -537,5 +549,55 @@ describe('route import', () => {
     expect(r.track).toHaveLength(3);
     expect(r.track![1].altFt).toBe(9843);
     expect(r.track![1].gsKt).toBeGreaterThan(100);
+  });
+});
+
+// ─── Logbook check, ordering, recorder merge, debrief, month comparison ─────
+import { findDuplicates, sortByDateDesc, compareMonths } from '../lib/stats';
+import { findMatchingFlight } from '../lib/recorder';
+import { buildDebrief } from '../lib/stats';
+
+describe('logbook check & debrief', () => {
+  const base = (dep: string, arr: string, date: string, extra: Partial<Flight> = {}): Flight => finalizeFlight({ ...emptyFlight(), date, dep: toRef(findAirport(dep)!), arr: toRef(findAirport(arr)!), status: 'completed', flightMinutes: 70, flightMinutesSource: 'manual', createdAt: `${date}T10:00:00Z`, ...extra } as Flight);
+  it('flags the same flight saved twice, not a return leg or a later repeat', () => {
+    const a = base('OMAA', 'OTHH', '2026-10-21', { createdAt: '2026-10-21T08:00:00Z' });
+    const b = base('OMAA', 'OTHH', '2026-10-21', { createdAt: '2026-10-21T12:00:00Z', track: [{ t: 1, lat: 24, lon: 54, altFt: 0, gsKt: 0, hdg: 0 }, { t: 2, lat: 25, lon: 52, altFt: 0, gsKt: 0, hdg: 0 }] as any });
+    const back = base('OTHH', 'OMAA', '2026-10-21');
+    const later = base('OMAA', 'OTHH', '2026-10-25');
+    const g = findDuplicates([a, b, back, later]);
+    expect(g).toHaveLength(1);
+    expect(g[0].flights.map((f) => f.id).sort()).toEqual([a.id, b.id].sort());
+  });
+  it('orders same-day flights by time, then by when they were saved', () => {
+    const x = base('OMDB', 'OMAA', '2026-10-21', { createdAt: '2026-10-21T15:00:00Z' });
+    const y = base('OMAA', 'OTHH', '2026-10-21', { createdAt: '2026-10-21T16:00:00Z' });
+    expect(sortByDateDesc([x, y])[0].id).toBe(y.id);
+    const t1 = base('OMDB', 'OMAA', '2026-10-21', { times: { ...emptyFlight().times, takeoff: '2026-10-21T18:00:00Z' } });
+    const t2 = base('OMAA', 'OTHH', '2026-10-21', { times: { ...emptyFlight().times, takeoff: '2026-10-21T09:00:00Z' }, createdAt: '2026-10-22T00:00:00Z' });
+    expect(sortByDateDesc([t2, t1])[0].id).toBe(t1.id);
+  });
+  it('a sim recording joins the matching SimBrief entry instead of adding a copy', () => {
+    const sb = base('OMAA', 'OTHH', '2026-10-21', { source: 'simbrief' } as any);
+    const other = base('OMAA', 'OTHH', '2026-10-10');
+    expect(findMatchingFlight([sb, other], 'OMAA', 'OTHH', '2026-10-21')?.id).toBe(sb.id);
+    expect(findMatchingFlight([sb], 'OMAA', 'OTHH', '2026-10-24')).toBeNull();
+    expect(findMatchingFlight([{ ...sb, track: [{}, {}] as any }], 'OMAA', 'OTHH', '2026-10-21')).toBeNull();
+  });
+  it('compares this month with last month', () => {
+    const now = LDT.fromISO('2026-10-21');
+    const fs = [base('OMAA', 'OTHH', '2026-10-02', { flightMinutes: 60 }), base('OTHH', 'OMAA', '2026-10-20', { flightMinutes: 60 }), base('OMAA', 'OMDB', '2026-09-05', { flightMinutes: 30 })];
+    const mc = compareMonths(fs, now);
+    expect(mc.cur.flights).toBe(2); expect(mc.cur.minutes).toBe(120);
+    expect(mc.last.minutes).toBe(30); expect(mc.months).toHaveLength(13);
+  });
+  it('debrief lists firsts and month totals from real records only', () => {
+    const now = LDT.fromISO('2026-10-21');
+    const first = base('OMAA', 'OMDB', '2026-09-05', { createdAt: '2026-09-05T10:00:00Z' });
+    const f = base('OMAA', 'OTHH', '2026-10-21', { landingRateFpm: -140 });
+    const d = buildDebrief(f, [first, f], DEFAULT_SETTINGS.goals, now);
+    expect(d.number).toBe(2);
+    expect(d.firsts.map((x) => x.label)).toEqual(expect.arrayContaining(['New airport', 'New country', 'New route']));
+    expect(d.landing?.label).toBe('Smooth');
+    expect(d.month.flights).toBe(1);
   });
 });

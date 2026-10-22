@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Share2, CheckCircle2, ArrowLeft, Pencil, Copy, Trash2, MapPin, Plane, Clock, Ruler, Mountain, Gauge, Users, CloudSun, Tag, NotebookPen, AlertTriangle, Fuel, Armchair, Info } from 'lucide-react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Share2, CheckCircle2, ArrowLeft, Pencil, Copy, Trash2, MapPin, Plane, Clock, Ruler, Mountain, Gauge, Users, CloudSun, Tag, NotebookPen, AlertTriangle, Fuel, Armchair, Info, Sparkles } from 'lucide-react';
+import { DebriefDialog } from '../components/flight/Debrief';
 import { useStore } from '../store/useStore';
 import { useFmt } from '../lib/useFmt';
 import { aircraftLabel, missingFields, routeKey, isCounted, hasPilotData, plannedPath } from '../lib/flight';
@@ -30,6 +31,9 @@ export default function FlightDetail() {
   const [share, setShare] = useState(false);
   const [photos, setPhotos] = useState<string[]>([]);
   const [lightbox, setLightbox] = useState<string | null>(null);
+  const [params, setParams] = useSearchParams();
+  const debrief = params.get('debrief') === '1';
+  const setDebrief = (v: boolean) => setParams((p) => { if (v) p.set('debrief', '1'); else p.delete('debrief'); return p; }, { replace: true });
 
   useEffect(() => {
     let alive = true;
@@ -93,6 +97,7 @@ export default function FlightDetail() {
       <div className="flex flex-wrap items-center gap-2">
         <button className="btn-ghost -ml-2" onClick={() => (history.length > 1 ? nav(-1) : nav('/flights'))}><ArrowLeft className="h-4 w-4" />Back</button>
         <div className="ml-auto flex flex-wrap justify-end gap-2">
+          {(f.status === 'completed' || f.status === 'diverted') && <button className="btn-glass" onClick={() => setDebrief(true)}><Sparkles className="h-4 w-4" /><span className="hidden sm:inline">Debrief</span></button>}
           {f.status === 'planned' && <button className="btn-primary" onClick={() => markFlown()}><CheckCircle2 className="h-4 w-4" />Mark as flown</button>}
           <button className="btn-glass" onClick={() => openForm(f, 'edit')} aria-label="Edit flight"><Pencil className="h-4 w-4" /><span className={f.status === 'planned' ? 'hidden sm:inline' : ''}>Edit</span></button>
           <button className="btn-glass" onClick={() => setShare(true)} aria-label="Share flight"><Share2 className="h-4 w-4" /><span className="hidden sm:inline">Share</span></button>
@@ -122,7 +127,7 @@ export default function FlightDetail() {
             {f.aircraft.registration && <><span>·</span><span className="mono">{fmt.reg(f)}</span></>}
             {f.simulator && <><span>·</span><span className="text-live">{f.simulator}</span></>}
           </div>
-          <RouteBar f={f} size="lg" />
+          <div className="pt-12"><RouteBar f={f} size="lg" /></div>
         </div>
       </section>
 
@@ -279,6 +284,7 @@ export default function FlightDetail() {
       </div>
 
       <ShareFlightDialog f={f} open={share} onOpenChange={setShare} />
+      <DebriefDialog flight={f} open={debrief && (f.status === 'completed' || f.status === 'diverted')} onOpenChange={setDebrief} />
       <ConfirmDialog open={confirm} onOpenChange={setConfirm} title="Delete this flight?" body="The record is removed and all totals recalculated. You can undo straight after." onConfirm={remove} />
       {lightbox && (
         <button className="fixed inset-0 z-[80] grid place-items-center bg-black/85 p-6 backdrop-blur" onClick={() => setLightbox(null)} aria-label="Close photo">
@@ -294,13 +300,15 @@ function minutesDelta(sched: string | null, actual: string | null): number | nul
   return Math.round((Date.parse(actual) - Date.parse(sched)) / 60000);
 }
 
+const STAT_TONE: Record<string, string> = { 'Flight time': '91 155 255', 'Block time': '167 139 250', 'Great-circle distance': '94 224 239', Cruise: '245 181 68' };
 function Stat({ icon: Icon, label, value, sub, tip }: { icon: any; label: string; value: string; sub?: string; tip?: string }) {
+  const tone = STAT_TONE[label] ?? '91 155 255';
   return (
-    <Glass className="p-4">
-      <div className="flex items-center gap-1.5 text-[12px] text-muted"><Icon className="h-3.5 w-3.5 text-ice/80" />{label}{tip && <Tip text={tip}><Info className="h-3 w-3 text-faint" /></Tip>}</div>
-      <div className="mono mt-2 text-[24px] font-semibold leading-none">{value}</div>
+    <div className="stat-card glass relative overflow-hidden rounded-xl2 p-4" style={{ ['--tone' as any]: tone }}>
+      <div className="flex items-center gap-2 text-[12px] text-muted"><span className="grid h-7 w-7 place-items-center rounded-lg" style={{ background: `rgb(${tone} / .16)`, boxShadow: `inset 0 0 0 1px rgb(${tone} / .35)` }}><Icon className="h-3.5 w-3.5" style={{ color: `rgb(${tone})` }} /></span>{label}{tip && <Tip text={tip}><Info className="h-3 w-3 text-faint" /></Tip>}</div>
+      <div className="tone-text mono mt-2.5 text-[26px] font-semibold leading-none">{value}</div>
       {sub && <div className="mt-1.5 truncate text-[11.5px] text-faint">{sub}</div>}
-    </Glass>
+    </div>
   );
 }
 

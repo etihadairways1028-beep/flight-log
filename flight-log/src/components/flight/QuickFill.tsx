@@ -11,6 +11,7 @@ import { code } from '../../lib/airports';
 import { Toggle, cx } from '../ui';
 import { sound } from '../../lib/sound';
 import type { Flight } from '../../lib/types';
+import { plural } from '../../lib/units';
 
 export type QuickPanel = 'simbrief' | 'paste' | 'scan' | null;
 
@@ -208,7 +209,7 @@ function ScanPanel({ onApply }: { onApply: (a: QuickApply) => void }) {
       )}
       {legs && (
         <div className="flex flex-col gap-1.5">
-          <div className="text-[12px] text-muted">This pass has {legs.length} flights. Pick one:</div>
+          <div className="text-[12px] text-muted">This pass has {plural(legs.length, 'flight')}. Pick one:</div>
           {legs.map((l, i) => <button type="button" key={i} className="btn-glass justify-start" onClick={() => onApply({ result: l, label: 'Boarding pass' })}><span className="mono">{l.flightNumber}</span> {code(l.dep)} → {code(l.arr)} <span className="text-faint">{l.date}</span></button>)}
         </div>
       )}

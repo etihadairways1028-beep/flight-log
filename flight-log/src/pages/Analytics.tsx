@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { DateTime } from 'luxon';
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, AreaChart, Area, LineChart, Line, Cell } from 'recharts';
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, AreaChart, Area, LineChart, Line, Cell, ReferenceLine } from 'recharts';
 import { BarChart3, Lightbulb, TrendingUp, TrendingDown, X, Info } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { useFmt } from '../lib/useFmt';
 import { applyFilters, emptyFilters } from '../lib/filters';
-import { summarize, monthly, groupBy, airportVisits, domesticSplit, bodySplit, engineSplit, manufacturerSplit, pctChange, type Summary } from '../lib/stats';
+import { compareMonths, summarize, monthly, groupBy, airportVisits, domesticSplit, bodySplit, engineSplit, manufacturerSplit, pctChange, type Summary } from '../lib/stats';
 import { aircraftLabel, isCounted, isSim, routeKey, typeKey } from '../lib/flight';
 import { generateInsights } from '../lib/insights';
 import type { Flight, FlightCategory, FlightFilters } from '../lib/types';
@@ -18,6 +18,7 @@ import { WorldMap, buildMapData } from '../components/map/WorldMap';
 import { FlightCard } from '../components/flight/FlightBits';
 import { monthLabel, calendarDate } from '../lib/time';
 import { code } from '../lib/airports';
+import { plural } from '../lib/units';
 
 type Tab = 'time' | 'aircraft' | 'routes' | 'pilot' | 'activity' | 'compare' | 'insights';
 const TABS: { value: Tab; label: string }[] = [
@@ -102,13 +103,17 @@ function FilterBar({ all, f, setF, count }: { all: Flight[]; f: FlightFilters; s
   );
 }
 
+const KPI_TONES = ['91 155 255', '167 139 250', '94 224 239', '52 211 153', '245 181 68', '247 143 179', '125 211 252', '251 146 60'];
+const kpiTone = (label: string) => KPI_TONES[[...label].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7) % KPI_TONES.length];
 function Kpi({ label, value, sub, tip }: { label: string; value: string; sub?: string; tip?: string }) {
+  const tone = kpiTone(label);
   return (
-    <Glass className="p-4">
+    <div className="stat-card glass relative overflow-hidden rounded-xl2 p-4 pl-5" style={{ ['--tone' as any]: tone }}>
+      <span className="absolute inset-y-4 left-0 w-[3px] rounded-r-full" style={{ background: `rgb(${tone})`, boxShadow: `0 0 10px rgb(${tone})` }} />
       <div className="flex items-center gap-1.5 text-[12px] text-muted">{label}{tip && <Tip text={tip}><Info className="h-3 w-3 text-faint" /></Tip>}</div>
-      <div className="mono mt-2 text-[22px] font-semibold leading-none">{value}</div>
+      <div className="tone-text mono mt-2 text-[24px] font-semibold leading-none">{value}</div>
       {sub && <div className="mt-1.5 truncate text-[11.5px] text-faint">{sub}</div>}
-    </Glass>
+    </div>
   );
 }
 
@@ -116,7 +121,14 @@ function TimeTab({ flights }: { flights: Flight[] }) {
   const fmt = useFmt();
   const nav = useNavigate();
   const s = useMemo(() => summarize(flights), [flights]);
-  const months = useMemo(() => monthly(flights).map((m) => ({ ...m, realH: +(m.realMinutes / 60).toFixed(1), simH: +(m.simMinutes / 60).toFixed(1), blockH: +(m.blockMinutes / 60).toFixed(1), cumH: +(m.cumulativeMinutes / 60).toFixed(1) })), [flights]);
+  const nowKey = DateTime.local().toFormat('yyyy-MM');
+  const months = useMemo(() => {
+    const keys = flights.filter(isCounted).map((f) => f.date.slice(0, 7)).sort();
+    const from = [keys[0] ?? nowKey, DateTime.local().minus({ months: 11 }).toFormat('yyyy-MM')].sort()[0];
+    const to = [keys[keys.length - 1] ?? nowKey, nowKey].sort().reverse()[0];
+    return monthly(flights, from, to).map((m) => ({ ...m, realH: +(m.realMinutes / 60).toFixed(1), simH: +(m.simMinutes / 60).toFixed(1), blockH: +(m.blockMinutes / 60).toFixed(1), cumH: +(m.cumulativeMinutes / 60).toFixed(1) }));
+  }, [flights]);
+  const activeMonths = months.filter((m) => m.flights > 0).length;
   const years = useMemo(() => {
     const m = new Map<string, { year: string; real: number; sim: number; block: number; flights: number }>();
     for (const f of flights) {
@@ -149,15 +161,16 @@ function TimeTab({ flights }: { flights: Flight[] }) {
 
   return (
     <div className="flex flex-col gap-4">
+      <MonthCompareCard flights={flights} />
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Kpi label={hasSim && hasReal ? 'Flight time · combined' : 'Flight time'} value={`${fmt.hours(s.flightMinutes)} h`} sub={`${s.flightTimeKnown} of ${s.flights} flights recorded`} tip="Takeoff to landing. Combined total = real-world + simulator, labelled as such." />
-        <Kpi label="Real-world time" value={`${fmt.hours(s.realMinutes)} h`} sub={`${s.realFlights} flights`} />
-        <Kpi label="Simulator time" value={`${fmt.hours(s.simMinutes)} h`} sub={`${s.simFlights} flights`} />
-        <Kpi label="Block time" value={`${fmt.hours(s.blockMinutes)} h`} sub={`${s.blockKnown} of ${s.flights} flights recorded`} tip="Only flights with block time recorded. Never derived from flight time." />
+        <Kpi label={hasSim && hasReal ? 'Flight time · combined' : 'Flight time'} value={`${fmt.hours(s.flightMinutes)} h`} sub={`${s.flightTimeKnown} of ${plural(s.flights, 'flight')} recorded`} tip="Takeoff to landing. Combined total = real-world + simulator, labelled as such." />
+        <Kpi label="Real-world time" value={`${fmt.hours(s.realMinutes)} h`} sub={`${plural(s.realFlights, 'flight')}`} />
+        <Kpi label="Simulator time" value={`${fmt.hours(s.simMinutes)} h`} sub={`${plural(s.simFlights, 'flight')}`} />
+        <Kpi label="Block time" value={`${fmt.hours(s.blockMinutes)} h`} sub={`${s.blockKnown} of ${plural(s.flights, 'flight')} recorded`} tip="Only flights with block time recorded. Never derived from flight time." />
         <Kpi label="Average flight" value={fmt.dur(s.avgMinutes)} sub={`Median ${fmt.dur(s.medianMinutes)}`} />
         <Kpi label="Longest flight" value={fmt.dur(s.longest?.flightMinutes)} sub={s.longest ? `${code(s.longest.dep)} → ${code(s.longest.arr)} · ${fmt.date(s.longest.date)}` : undefined} />
         <Kpi label="Shortest flight" value={fmt.dur(s.shortest?.flightMinutes)} sub={s.shortest ? `${code(s.shortest.dep)} → ${code(s.shortest.arr)}` : undefined} />
-        <Kpi label="Flights per week / month" value={`${(s.flights / weeks).toFixed(2)} / ${(s.flights / Math.max(1, months.length)).toFixed(1)}`} sub={`Over ${months.length} months of activity`} />
+        <Kpi label="Flights per week / month" value={`${(s.flights / weeks).toFixed(2)} / ${(s.flights / Math.max(1, activeMonths)).toFixed(1)}`} sub={`Over ${activeMonths} month${activeMonths === 1 ? '' : 's'} with flights`} />
       </div>
       <div className="grid gap-4 lg:grid-cols-3">
         <ChartCard className="lg:col-span-2" eyebrow="Monthly totals" title="Flight hours by month" action={<Legend items={[...(hasReal ? [{ label: 'Real-world', color: '#5b9bff' }] : []), ...(hasSim ? [{ label: 'Simulator', color: '#5ee0ef' }] : [])]} />}>
@@ -167,8 +180,9 @@ function TimeTab({ flights }: { flights: Flight[] }) {
               <XAxis dataKey="month" tickFormatter={(m) => monthLabel(m)} {...AXIS} minTickGap={20} />
               <YAxis {...AXIS} width={44} />
               <Tooltip cursor={{ fill: 'rgb(255 255 255 / .04)' }} content={<ChartTooltip labelFormat={(m: string) => monthLabel(m, true)} format={(v: number) => `${v} h`} />} />
-              {hasReal && <Bar dataKey="realH" name="Real-world" stackId="a" fill="#5b9bff" />}
-              {hasSim && <Bar dataKey="simH" name="Simulator" stackId="a" fill="#5ee0ef" radius={[4, 4, 0, 0]} />}
+              {hasReal && <Bar dataKey="realH" name="Real-world" stackId="a" fill="url(#g-blue)" maxBarSize={26} />}
+              {hasSim && <Bar dataKey="simH" name="Simulator" stackId="a" fill="url(#g-cyan)" maxBarSize={26} radius={[6, 6, 0, 0]} />}
+              {!hasReal && !hasSim && <Bar dataKey="realH" name="Hours" fill="url(#g-blue)" maxBarSize={26} />}
             </BarChart>
           </ResponsiveContainer></div>
         </ChartCard>
@@ -179,7 +193,7 @@ function TimeTab({ flights }: { flights: Flight[] }) {
               <XAxis dataKey="year" {...AXIS} />
               <YAxis {...AXIS} width={44} />
               <Tooltip cursor={{ fill: 'rgb(255 255 255 / .04)' }} content={<ChartTooltip format={(v: number) => `${v} h`} />} />
-              <Bar dataKey="h" name="Flight hours" fill="#a9d4ff" radius={[5, 5, 1, 1]} />
+              <Bar dataKey="h" name="Flight hours" fill="url(#g-violet)" maxBarSize={56} radius={[8, 8, 2, 2]} />
             </BarChart>
           </ResponsiveContainer></div>
           <table className="mt-3 w-full text-[12.5px]">
@@ -198,19 +212,8 @@ function TimeTab({ flights }: { flights: Flight[] }) {
               <XAxis dataKey="month" tickFormatter={(m) => monthLabel(m)} {...AXIS} minTickGap={30} />
               <YAxis {...AXIS} width={52} />
               <Tooltip content={<ChartTooltip labelFormat={(m: string) => monthLabel(m, true)} format={(v: number) => `${v} h`} />} />
-              <Area type="monotone" dataKey="cumH" name="Total" stroke="#a9d4ff" strokeWidth={2} fill="url(#cum2)" />
+              <Area type="monotone" dataKey="cumH" name="Total" stroke="#c4b5fd" strokeWidth={2.5} fill="url(#ga-violet)" />
             </AreaChart>
-          </ResponsiveContainer></div>
-        </ChartCard>
-        <ChartCard className="lg:col-span-3" eyebrow="Weekly" title="Flights per week (last 26 weeks)" footer="Weeks start on Monday.">
-          <div className="h-[180px]"><ResponsiveContainer>
-            <BarChart data={weekly} margin={{ top: 4, right: 4, left: -10, bottom: 0 }}>
-              <CartesianGrid vertical={false} />
-              <XAxis dataKey="label" {...AXIS} minTickGap={24} />
-              <YAxis {...AXIS} allowDecimals={false} width={40} />
-              <Tooltip cursor={{ fill: 'rgb(255 255 255 / .04)' }} content={<ChartTooltip labelFormat={(l: string) => `Week of ${l}`} />} />
-              <Bar dataKey="flights" name="Flights" fill="#5b9bff" radius={[4, 4, 1, 1]} />
-            </BarChart>
           </ResponsiveContainer></div>
         </ChartCard>
         <ChartCard eyebrow="Distribution" title="Flight durations" footer="Flights with a recorded flight time.">
@@ -220,7 +223,18 @@ function TimeTab({ flights }: { flights: Flight[] }) {
               <XAxis dataKey="label" {...AXIS} interval={0} />
               <YAxis {...AXIS} allowDecimals={false} width={40} />
               <Tooltip cursor={{ fill: 'rgb(255 255 255 / .04)' }} content={<ChartTooltip />} />
-              <Bar dataKey="n" name="Flights" radius={[5, 5, 1, 1]}>{hist.map((_, i) => <Cell key={i} fill={SERIES[i % 3]} />)}</Bar>
+              <Bar dataKey="n" name="Flights" maxBarSize={44} radius={[8, 8, 2, 2]}>{hist.map((_, i) => <Cell key={i} fill={['url(#g-blue)', 'url(#g-cyan)', 'url(#g-violet)', 'url(#g-green)', 'url(#g-amber)', 'url(#g-pink)'][i % 6]} />)}</Bar>
+            </BarChart>
+          </ResponsiveContainer></div>
+        </ChartCard>
+        <ChartCard className="lg:col-span-3" eyebrow="Weekly" title="Flights per week (last 26 weeks)" footer="Weeks start on Monday.">
+          <div className="h-[180px]"><ResponsiveContainer>
+            <BarChart data={weekly} margin={{ top: 4, right: 4, left: -10, bottom: 0 }}>
+              <CartesianGrid vertical={false} />
+              <XAxis dataKey="label" {...AXIS} minTickGap={24} />
+              <YAxis {...AXIS} allowDecimals={false} width={40} />
+              <Tooltip cursor={{ fill: 'rgb(255 255 255 / .04)' }} content={<ChartTooltip labelFormat={(l: string) => `Week of ${l}`} />} />
+              <Bar dataKey="flights" name="Flights" fill="url(#g-blue)" maxBarSize={22} radius={[6, 6, 2, 2]} />
             </BarChart>
           </ResponsiveContainer></div>
         </ChartCard>
@@ -295,7 +309,7 @@ function RoutesTab({ flights }: { flights: Flight[] }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Kpi label="Total distance" value={fmt.dist(s.distanceKm)} sub={`${s.distanceKnown} flights with both airports`} />
+        <Kpi label="Total distance" value={fmt.dist(s.distanceKm)} sub={`${plural(s.distanceKnown, 'flight')} with both airports`} />
         <Kpi label="Average route" value={fmt.dist(s.distanceKnown ? s.distanceKm / s.distanceKnown : null)} sub="Great-circle" />
         <Kpi label="Unique routes" value={String(s.uniqueRoutes)} sub="City pairs, either direction" />
         <Kpi label="International share" value={split.domestic + split.international ? `${Math.round((split.international / (split.domestic + split.international)) * 100)}%` : '—'} sub={`${split.international} intl · ${split.domestic} domestic`} />
@@ -481,5 +495,95 @@ function PilotTab({ flights }: { flights: Flight[] }) {
       </Glass>
       <p className="text-[11.5px] text-faint">Recency follows the common “3 takeoffs and landings in 90 days” pattern and only counts real-world flights with takeoffs and landings recorded. It’s an indicator, not legal advice: requirements vary by authority, aircraft class and rating. Flight Log isn't an approved regulatory logbook.</p>
     </div>
+  );
+}
+
+/** This month vs last month vs your usual month, plus a month-by-month table. */
+function MonthCompareCard({ flights }: { flights: Flight[] }) {
+  const fmt = useFmt();
+  const mc = useMemo(() => compareMonths(flights), [flights]);
+  const [showAll, setShowAll] = useState(false);
+  const cur = mc.cur, last = mc.last;
+  const curL = monthLabel(mc.month, true), lastL = monthLabel(mc.prev, true);
+  const pct = (a: number, b: number) => (b > 0 ? Math.round(((a - b) / b) * 100) : null);
+  const items = [
+    { label: 'Hours', a: cur.minutes / 60, b: last.minutes / 60, avg: mc.avg.minutes / 60, fmtv: (v: number) => `${v.toFixed(1)} h` },
+    { label: 'Flights', a: cur.flights, b: last.flights, avg: mc.avg.flights, fmtv: (v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(1)) },
+    { label: `Distance`, a: cur.distanceKm, b: last.distanceKm, avg: mc.avg.distanceKm, fmtv: (v: number) => fmt.dist(v) },
+  ];
+  const chart = mc.months.map((m) => ({ month: m.month, h: +(m.minutes / 60).toFixed(1), cur: m.month === mc.month }));
+  const avgH = +(mc.avg.minutes / 60).toFixed(1);
+  const table = [...mc.months].reverse().map((m, i, arr) => ({ ...m, prevMin: arr[i + 1]?.minutes ?? null }));
+  const shown = showAll ? table : table.slice(0, 6);
+  return (
+    <Glass className="p-4 md:p-5">
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-ice">This month</div>
+          <h2 className="text-[18px] font-semibold">{curL} compared with {lastL}</h2>
+        </div>
+        <span className="text-[12px] text-muted">Average = months with flights in the year before</span>
+      </div>
+      <div className="mt-4 grid gap-3 md:grid-cols-3">
+        {items.map((it) => {
+          const p = pct(it.a, it.b);
+          const up = it.a >= it.b;
+          const max = Math.max(it.a, it.b, it.avg, 1e-9);
+          return (
+            <div key={it.label} className="rounded-xl bg-white/[0.04] p-3.5 ring-1 ring-white/[0.07]">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-[12px] text-muted">{it.label}</span>
+                {p != null ? <span className={cx('flex items-center gap-1 text-[12px] font-medium', up ? 'text-good' : 'text-warn')}>{up ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}{p > 0 ? '+' : ''}{p}%</span> : <span className="text-[12px] text-faint">{it.b ? '' : `none in ${monthLabel(mc.prev)}`}</span>}
+              </div>
+              <div className="num mt-1 text-[24px] font-semibold">{it.fmtv(it.a)}</div>
+              <div className="mt-2 flex flex-col gap-1.5">
+                {[[monthLabel(mc.month), it.a, 'bg-gradient-to-r from-accent to-cyan-400'], [monthLabel(mc.prev), it.b, 'bg-white/30'], ['Average', it.avg, 'bg-white/15']].map(([l, v, c]) => (
+                  <div key={l as string} className="grid grid-cols-[56px_1fr_64px] items-center gap-2 text-[11px]">
+                    <span className="text-muted">{l}</span>
+                    <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.05]"><div className={cx('h-full rounded-full', c as string)} style={{ width: `${Math.max(1.5, ((v as number) / max) * 100)}%` }} /></div>
+                    <span className="num text-right text-muted">{it.fmtv(v as number)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-4 grid gap-4 lg:grid-cols-[1.4fr_1fr]">
+        <div>
+          <div className="mb-1 text-[12px] text-muted">Hours per month, last 13 months{avgH ? ` · dashed line = your average (${avgH} h)` : ''}</div>
+          <div className="h-[200px]"><ResponsiveContainer>
+            <BarChart data={chart} margin={{ top: 8, right: 4, left: -8, bottom: 0 }}>
+              <CartesianGrid vertical={false} />
+              <XAxis dataKey="month" tickFormatter={(m) => monthLabel(m)} {...AXIS} interval={0} tick={{ ...AXIS.tick, fontSize: 10 }} />
+              <YAxis {...AXIS} width={38} />
+              <Tooltip cursor={{ fill: 'rgb(255 255 255 / .04)' }} content={<ChartTooltip labelFormat={(m: string) => monthLabel(m, true)} format={(v: number) => `${v} h`} />} />
+              {avgH > 0 && <ReferenceLine y={avgH} stroke="#a78bfa" strokeDasharray="4 4" />}
+              <Bar dataKey="h" name="Hours" maxBarSize={28} radius={[5, 5, 0, 0]}>
+                {chart.map((c) => <Cell key={c.month} fill={c.cur ? 'url(#g-cyan)' : 'url(#g-blue)'} fillOpacity={c.cur ? 1 : 0.7} />)}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer></div>
+        </div>
+        <div>
+          <div className="mb-1 text-[12px] text-muted">Month by month</div>
+          <div className="overflow-hidden rounded-xl ring-1 ring-white/[0.07]">
+            <div className="grid grid-cols-[1fr_52px_64px_64px] gap-2 border-b border-white/[0.07] bg-white/[0.03] px-3 py-1.5 text-[11px] text-muted"><span>Month</span><span className="text-right">Flights</span><span className="text-right">Hours</span><span className="text-right">vs prev</span></div>
+            {shown.map((m) => {
+              const d = m.prevMin == null ? null : m.minutes - m.prevMin;
+              return (
+                <div key={m.month} className={cx('grid grid-cols-[1fr_52px_64px_64px] gap-2 border-b border-white/[0.04] px-3 py-1.5 text-[12px] last:border-0', m.month === mc.month && 'bg-accent/10')}>
+                  <span>{monthLabel(m.month, true)}</span>
+                  <span className="num text-right">{m.flights}</span>
+                  <span className="num text-right">{(m.minutes / 60).toFixed(1)}</span>
+                  <span className={cx('num text-right', d == null || d === 0 ? 'text-faint' : d > 0 ? 'text-good' : 'text-warn')}>{d == null ? '—' : d === 0 ? '0' : `${d > 0 ? '+' : '−'}${(Math.abs(d) / 60).toFixed(1)}`}</span>
+                </div>
+              );
+            })}
+          </div>
+          {table.length > 6 && <button className="btn-ghost mt-1 h-8 px-2 text-[12px]" onClick={() => setShowAll((v) => !v)}>{showAll ? 'Show fewer' : `Show all ${plural(table.length, 'month')}`}</button>}
+        </div>
+      </div>
+    </Glass>
   );
 }

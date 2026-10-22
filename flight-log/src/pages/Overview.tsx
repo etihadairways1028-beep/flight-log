@@ -17,6 +17,7 @@ import { PHOTOS, photoForBody, hashStr, nextHeroPhoto } from '../lib/images';
 import { aircraftType } from '../lib/aircraftTypes';
 import { code } from '../lib/airports';
 import { monthLabel } from '../lib/time';
+import { plural } from '../lib/units';
 
 type Range = '12' | '24' | 'all';
 
@@ -53,6 +54,7 @@ export default function Overview() {
   const mapData = useMemo(() => buildMapData(counted), [counted]);
   const hasSim = sum.simFlights > 0;
 
+  const spark = useMemo(() => (counted.length ? monthly(counted, now.minus({ months: 11 }).toFormat('yyyy-MM'), now.toFormat('yyyy-MM')) : []), [counted]);
   const greeting = now.hour < 5 ? 'Good evening' : now.hour < 12 ? 'Good morning' : now.hour < 18 ? 'Good afternoon' : 'Good evening';
   const [heroPhoto, setHeroPhoto] = useState(nextHeroPhoto);
 
@@ -62,7 +64,7 @@ export default function Overview() {
     block: { label: 'Block hours', icon: Timer, value: sum.blockMinutes / 60, format: (n) => n.toLocaleString('en-GB', { maximumFractionDigits: 1, minimumFractionDigits: 1 }), to: '/analytics?tab=time', sub: sum.blockKnown ? 'Off-block to on-block' : 'Not recorded yet', partial: [sum.blockKnown, sum.flights], tip: 'Gate-to-gate time. Only counted where off-block and on-block (or a block duration) were recorded.' },
     distance: { label: `Distance (${fmt.distUnit})`, icon: Ruler, value: fmt.distNum(sum.distanceKm), to: '/analytics?tab=routes', sub: sum.distanceKm ? `${(sum.distanceKm / 40075).toFixed(2)}× around the equator` : 'Great-circle', partial: [sum.distanceKnown, sum.flights] },
     aircraft: { label: 'Aircraft types', icon: Layers, value: sum.uniqueTypes, to: '/aircraft', sub: sum.uniqueRegistrations ? `${sum.uniqueRegistrations} registrations` : undefined },
-    airports: { label: 'Airports', icon: MapPin, value: sum.uniqueAirports, to: '/airports?filter=visited', sub: sum.uniqueCountries ? `${sum.uniqueCountries} countries` : undefined },
+    airports: { label: 'Airports', icon: MapPin, value: sum.uniqueAirports, to: '/airports?filter=visited', sub: sum.uniqueCountries ? `${plural(sum.uniqueCountries, 'country')}` : undefined },
     routes: { label: 'Unique routes', icon: Route, value: sum.uniqueRoutes, to: '/map', sub: 'City pairs, either direction' },
     airlines: { label: 'Airlines & operators', icon: Building2, value: sum.airlines, to: '/analytics?tab=aircraft' },
     month: { label: 'This month', icon: CalendarRange, value: thisMonth, to: '/calendar', sub: now.toFormat('LLLL') },
@@ -88,7 +90,7 @@ export default function Overview() {
               <h1 className="text-[34px] font-semibold leading-[1.05] tracking-[-0.03em] md:text-[46px] text-balance">{greeting}{s.displayName ? `, ${s.displayName.split(' ')[0]}` : ''}.</h1>
               <p className="mt-2 max-w-lg text-[14px] text-fg/75">
                 {latest ? <>Last logged: <span className="mono text-fg">{code(latest.dep)} → {code(latest.arr)}</span> on {fmt.date(latest.date)}{latest.aircraft.typeCode ? <> aboard the {aircraftShort(latest)}</> : null}.</> : 'Your logbook is ready.'}
-                {' '}{sum.flights} flights and {fmt.hours(sum.flightMinutes)} hours so far.
+                {' '}{plural(sum.flights, 'flight')} and {fmt.hours(sum.flightMinutes)} hours so far.
               </p>
               <div className="mt-5 flex flex-wrap gap-2">
                 <button className="btn-primary h-11 px-5" onClick={() => openForm()}><Plus className="h-4 w-4" />Log a flight</button>
@@ -115,14 +117,16 @@ export default function Overview() {
             </Link>
           )}
           <Link to="/map" className="glass glass-hover relative overflow-hidden rounded-xl3" aria-label="Open routes map">
-            <WorldMap routes={mapData.routes} airports={mapData.airports} height={170} interactive={false} showLabels={false} />
+            <WorldMap routes={mapData.routes} airports={mapData.airports} height={170} interactive={false} showLabels={false} spin />
             <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between bg-gradient-to-t from-ink/90 to-transparent p-4">
-              <div><div className="label">Routes & map</div><div className="text-[13px] text-fg/90">{sum.uniqueRoutes} routes · {sum.uniqueAirports} airports · {sum.uniqueCountries} countries</div></div>
+              <div><div className="label">Routes & map</div><div className="text-[13px] text-fg/90">{plural(sum.uniqueRoutes, 'route')} · {plural(sum.uniqueAirports, 'airport')} · {plural(sum.uniqueCountries, 'country')}</div></div>
               <ArrowUpRight className="h-4 w-4 text-muted" />
             </div>
           </Link>
         </div>
       </section>
+
+      <LogbookCheck />
 
       <QuickLogBar latest={latest} />
       <GoalsCard />
@@ -133,15 +137,18 @@ export default function Overview() {
         {s.dashboardCards.filter((k) => cards[k]).map((k) => {
           const c = cards[k];
           return (
-            <Link key={k} to={c.to} className="glass glass-hover group flex min-w-0 flex-col rounded-xl2 p-4 focus-visible:ring-2 focus-visible:ring-ice/60">
-              <div className="flex items-center gap-2 text-muted">
-                <c.icon className="h-3.5 w-3.5 text-ice/80" />
-                <span className="truncate text-[12px] font-medium">{c.label}</span>
+            <Link key={k} to={c.to} style={{ ['--tone' as any]: TONE[k] ?? '91 155 255' }} className="stat-card glass glass-hover group relative flex min-w-0 flex-col overflow-hidden rounded-xl2 p-4 focus-visible:ring-2 focus-visible:ring-ice/60">
+              <div className="flex items-center gap-2.5 text-muted">
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl" style={{ background: `rgb(${TONE[k] ?? '91 155 255'} / .16)`, boxShadow: `inset 0 0 0 1px rgb(${TONE[k] ?? '91 155 255'} / .35)` }}><c.icon className="h-4 w-4" style={{ color: `rgb(${TONE[k] ?? '91 155 255'})` }} /></span>
+                <span className="truncate text-[12.5px] font-medium">{c.label}</span>
                 {c.partial && <Partial known={c.partial[0]} total={c.partial[1]} />}
                 <ChevronRight className="ml-auto h-3.5 w-3.5 opacity-0 transition group-hover:opacity-100" />
               </div>
-              <div className="mt-2.5 text-[26px] font-semibold leading-none tracking-tight md:text-[30px]">
-                {Number.isFinite(c.value) ? <AnimatedNumber value={c.value} format={c.format} /> : <span className="text-faint">—</span>}
+              <div className="mt-3 flex items-end gap-3">
+                <div className="tone-text text-[28px] font-semibold leading-none tracking-tight md:text-[32px]">
+                  {Number.isFinite(c.value) ? <AnimatedNumber value={c.value} format={c.format} /> : <span className="text-faint">—</span>}
+                </div>
+                {SPARK[k] && spark.length > 1 && <Sparkline values={spark.map(SPARK[k]!)} tone={TONE[k] ?? '91 155 255'} />}
               </div>
               {c.sub && <div className="mt-2 truncate text-[11.5px] text-faint">{c.sub}</div>}
             </Link>
@@ -163,7 +170,10 @@ export default function Overview() {
                 <div className="mt-1 text-[12.5px] text-muted">{i.detail}</div>
               </>
             );
-            return i.href ? <Link key={i.id} to={i.href} className="glass glass-hover rounded-xl2 p-4">{body}</Link> : <Glass key={i.id} className="p-4">{body}</Glass>;
+            const tone = i.tone === 'up' ? '52 211 153' : i.tone === 'down' ? '245 181 68' : '167 139 250';
+            const cls = 'stat-card glass relative overflow-hidden rounded-xl2 p-4 pl-5';
+            const bar = <span className="absolute inset-y-3 left-0 w-[3px] rounded-r-full" style={{ background: `rgb(${tone})`, boxShadow: `0 0 12px rgb(${tone})` }} />;
+            return i.href ? <Link key={i.id} to={i.href} style={{ ['--tone' as any]: tone }} className={cx(cls, 'glass-hover')}>{bar}{body}</Link> : <div key={i.id} style={{ ['--tone' as any]: tone }} className={cls}>{bar}{body}</div>;
           })}
         </section>
       )}
@@ -182,8 +192,8 @@ export default function Overview() {
                 <XAxis dataKey="month" tickFormatter={(m) => monthLabel(m)} {...AXIS} interval="preserveStartEnd" minTickGap={18} />
                 <YAxis {...AXIS} width={44} allowDecimals={false} />
                 <Tooltip cursor={{ fill: 'rgb(255 255 255 / .04)' }} content={<ChartTooltip labelFormat={(m: string) => monthLabel(m, true)} format={(v: number) => `${v.toFixed(1)} h`} />} />
-                <Bar dataKey="realH" name="Real-world" stackId="h" fill="#5b9bff" radius={hasSim ? [0, 0, 0, 0] : [5, 5, 1, 1]} />
-                {hasSim && <Bar dataKey="simH" name="Simulator" stackId="h" fill="#5ee0ef" radius={[5, 5, 1, 1]} />}
+                <Bar dataKey="realH" name="Real-world" stackId="h" fill="url(#g-blue)" maxBarSize={30} radius={hasSim ? [0, 0, 0, 0] : [7, 7, 2, 2]} />
+                {hasSim && <Bar dataKey="simH" name="Simulator" stackId="h" fill="url(#g-cyan)" maxBarSize={30} radius={[7, 7, 2, 2]} />}
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -197,7 +207,7 @@ export default function Overview() {
                 <XAxis dataKey="month" tickFormatter={(m) => monthLabel(m)} {...AXIS} interval="preserveStartEnd" minTickGap={24} />
                 <YAxis {...AXIS} width={40} allowDecimals={false} />
                 <Tooltip content={<ChartTooltip labelFormat={(m: string) => monthLabel(m, true)} />} />
-                <Area type="monotone" dataKey="flights" name="Flights" stroke="#a9d4ff" strokeWidth={2} fill="url(#fpm)" dot={false} activeDot={{ r: 4, fill: '#fff' }} />
+                <Area className="chart-glow" type="monotone" dataKey="flights" name="Flights" stroke="#7cb4ff" strokeWidth={2.5} fill="url(#ga-blue)" dot={false} activeDot={{ r: 4, fill: '#fff' }} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -211,7 +221,7 @@ export default function Overview() {
                 <XAxis dataKey="month" tickFormatter={(m) => monthLabel(m)} {...AXIS} interval="preserveStartEnd" minTickGap={30} />
                 <YAxis {...AXIS} width={44} />
                 <Tooltip content={<ChartTooltip labelFormat={(m: string) => monthLabel(m, true)} format={(v: number) => `${v.toLocaleString('en-GB')} h`} />} />
-                <Area type="monotone" dataKey="cumH" name="Total hours" stroke="#5ee0ef" strokeWidth={2} fill="url(#cum)" dot={false} />
+                <Area type="monotone" dataKey="cumH" name="Total hours" stroke="#8ff0fa" strokeWidth={2.5} fill="url(#ga-cyan)" dot={false} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -242,7 +252,7 @@ export default function Overview() {
         <ChartCard hidden={!s.dashboardCharts.includes('topAirports')} eyebrow="Places" title="Most visited airports" empty={!topAirports.length} action={<Link to="/airports?filter=visited" className="link text-[12px]">All airports</Link>}>
           <RankBars rows={topAirports.map((a) => ({ key: a.ident, label: <><span className="mono mr-2 text-ice">{a.label}</span>{a.city || a.name}</>, value: a.total }))} format={(v) => `${v}`} onClick={(k) => nav(`/airports/${k}`)} />
         </ChartCard>
-        <ChartCard hidden={!s.dashboardCharts.includes('domestic')} eyebrow="Borders" title="Domestic vs international" empty={split.domestic + split.international === 0} footer={split.unknown ? `${split.unknown} flights without country data are left out.` : 'Based on the departure and arrival airport countries.'}>
+        <ChartCard hidden={!s.dashboardCharts.includes('domestic')} eyebrow="Borders" title="Domestic vs international" empty={split.domestic + split.international === 0} footer={split.unknown ? `${plural(split.unknown, 'flight')} without country data are left out.` : 'Based on the departure and arrival airport countries.'}>
           <div className="flex items-end gap-6">
             <div><div className="text-[30px] font-semibold num leading-none">{split.international}</div><div className="mt-1 text-[12px] text-muted">International</div></div>
             <div><div className="text-[30px] font-semibold num leading-none text-muted">{split.domestic}</div><div className="mt-1 text-[12px] text-muted">Domestic</div></div>
@@ -295,6 +305,28 @@ export default function Overview() {
   );
 }
 
+const TONE: Record<string, string> = {
+  flights: '91 155 255', hours: '167 139 250', distance: '94 224 239', airports: '52 211 153', aircraft: '245 181 68', routes: '247 143 179',
+  block: '125 211 252', airlines: '251 146 60', month: '91 155 255', average: '167 139 250', longest: '245 181 68', topType: '94 224 239',
+};
+const SPARK: Record<string, ((m: { flights: number; minutes: number; distanceKm: number; blockMinutes: number }) => number) | undefined> = {
+  flights: (m) => m.flights, hours: (m) => m.minutes, distance: (m) => m.distanceKm, block: (m) => m.blockMinutes, month: (m) => m.flights,
+};
+function Sparkline({ values, tone }: { values: number[]; tone: string }) {
+  const w = 84, h = 30, mx = Math.max(1, ...values);
+  const pts = values.map((v, i) => [(i / (values.length - 1)) * w, h - 2 - (v / mx) * (h - 6)] as const);
+  const d = pts.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`).join('');
+  const id = 'sp' + tone.replace(/\s/g, '');
+  return (
+    <svg width={w} height={h} className="ml-auto shrink-0 overflow-visible" aria-hidden>
+      <defs><linearGradient id={id} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={`rgb(${tone})`} stopOpacity=".35" /><stop offset="100%" stopColor={`rgb(${tone})`} stopOpacity="0" /></linearGradient></defs>
+      <path d={`${d}L${w},${h}L0,${h}Z`} fill={`url(#${id})`} />
+      <path d={d} fill="none" stroke={`rgb(${tone})`} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ filter: `drop-shadow(0 0 4px rgb(${tone} / .6))` }} />
+      <circle cx={pts[pts.length - 1][0]} cy={pts[pts.length - 1][1]} r="2.4" fill="#fff" />
+    </svg>
+  );
+}
+
 function Ring({ pct, size = 64, tone = '#5b9bff' }: { pct: number; size?: number; tone?: string }) {
   const r = size / 2 - 5, c = 2 * Math.PI * r, p = Math.max(0, Math.min(1, pct));
   return (
@@ -305,6 +337,16 @@ function Ring({ pct, size = 64, tone = '#5b9bff' }: { pct: number; size?: number
   );
 }
 
+function streakNote(st: ReturnType<typeof streaks>): string {
+  if (!st.lastDate) return 'Log a flight to start a streak.';
+  if (st.days.atRisk) return `Fly today to make it ${st.days.current + 1} days in a row.`;
+  if (st.days.activeNow && st.days.current > 1) return `You've flown ${plural(st.days.current, 'day')} running. Same again tomorrow?`;
+  if (st.weeks.atRisk) return `No flight yet this week. One more keeps your ${st.weeks.current}-week streak going.`;
+  if (st.months.atRisk) return `Log a flight this month to keep your ${st.months.current}-month streak.`;
+  if (st.days.activeNow) return 'You flew today. Fly tomorrow to start a day streak.';
+  return `Last flight: ${DateTime.fromISO(st.lastDate).toFormat('d LLL yyyy')}.`;
+}
+
 function GoalsCard() {
   const flights = useStore((x) => x.data.flights);
   const goals = useStore((x) => x.settings.goals);
@@ -313,13 +355,21 @@ function GoalsCard() {
   const fmtV = (v: number, u: string) => (u === 'hours' ? v.toFixed(1) : String(Math.round(v)));
   return (
     <section aria-label="Goals and streaks" className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
-      <div className="glass flex items-center gap-4 rounded-xl2 p-4">
-        <div className={cx('grid h-14 w-14 shrink-0 place-items-center rounded-2xl text-[24px] ring-1', st.months ? 'bg-warn/15 ring-warn/30' : 'bg-white/[0.04] ring-white/10')} aria-hidden>{st.months ? '🔥' : '✈️'}</div>
-        <div className="min-w-0 flex-1">
-          <div className="label">Streak</div>
-          <div className="text-[20px] font-semibold leading-tight">{st.months} month{st.months === 1 ? '' : 's'} <span className="text-[13px] font-normal text-muted">· {st.weeks} week{st.weeks === 1 ? '' : 's'}</span></div>
-          <div className="text-[12px] text-muted">{st.monthAtRisk ? 'Log a flight this month to keep it going.' : st.months ? `Best: ${st.monthsBest} months in a row` : 'Fly in consecutive months to build a streak.'}</div>
+      <div className="glass rounded-xl2 p-4">
+        <div className="flex items-center justify-between gap-2">
+          <div className="label">Streaks</div>
+          <Tip text="Counted from the departure date of every flight you've logged. Several flights on one day count once; planned flights and future dates never count. Weeks start on Monday."><span className="text-[11px] text-faint">How it works</span></Tip>
         </div>
+        <div className="mt-2 grid grid-cols-3 gap-2">
+          {([['Days', st.days], ['Weeks', st.weeks], ['Months', st.months]] as const).map(([l, r]) => (
+            <div key={l} className={cx('rounded-xl p-2.5 ring-1', r.current ? 'bg-warn/10 ring-warn/25' : 'bg-white/[0.03] ring-white/[0.07]')}>
+              <div className="flex items-baseline gap-1"><span className="num text-[22px] font-semibold leading-none">{r.current}</span>{r.current > 0 && <span aria-hidden className="text-[13px]">🔥</span>}</div>
+              <div className="mt-1 text-[11px] text-muted">{l} in a row</div>
+              <div className="text-[10.5px] text-faint">Best {r.best}</div>
+            </div>
+          ))}
+        </div>
+        <div className="mt-2 text-[12px] text-muted">{streakNote(st)}</div>
       </div>
       <div className="glass rounded-xl2 p-4">
         {gp.length ? (
@@ -446,3 +496,64 @@ function QuickLogBar({ latest }: { latest: Flight | undefined }) {
 }
 
 import { RecencyCards } from '../components/charts/Recency';
+
+// ─── Logbook check: duplicates and bridge test recordings ───────────────────
+import { findDuplicates } from '../lib/stats';
+import { AlertTriangle, Trash2, Check } from 'lucide-react';
+const DUP_OK_KEY = 'skylog:dup-ok';
+function LogbookCheck() {
+  const flights = useStore((s) => s.data.flights);
+  const del = useStore((s) => s.deleteFlights);
+  const restore = useStore((s) => s.restoreFlights);
+  const toast = useStore((s) => s.toast);
+  const fmt = useFmt();
+  const nav = useNavigate();
+  const [ok, setOk] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem(DUP_OK_KEY) || '[]'); } catch { return []; } });
+  const dups = useMemo(() => findDuplicates(flights).filter((g) => !ok.includes(g.key)), [flights, ok]);
+  const tests = useMemo(() => flights.filter((f) => isCounted(f) && f.tags.includes('bridge-test')), [flights]);
+  if (!dups.length && !tests.length) return null;
+  const keep = (k: string) => { const n = [...ok, k]; setOk(n); try { localStorage.setItem(DUP_OK_KEY, JSON.stringify(n)); } catch { /* private mode */ } };
+  async function remove(ids: string[], what: string) {
+    const removed = await del(ids);
+    toast({ kind: 'info', title: `${what} deleted`, body: 'Totals and charts have been recalculated.', action: { label: 'Undo', run: () => restore(removed) } });
+  }
+  const src = (f: Flight) => f.track && f.track.length > 1 ? 'Recorded track' : f.source === 'simbrief' || f.flightPlan?.source === 'simbrief' ? 'SimBrief plan' : f.source === 'csv' || f.source === 'json' ? 'Imported' : f.source === 'duplicate' ? 'Duplicated' : 'Typed in';
+  const row = (f: Flight, extra?: React.ReactNode) => (
+    <div key={f.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl bg-white/[0.03] px-3 py-2 ring-1 ring-white/[0.06]">
+      <button className="mono text-[13px] font-semibold text-fg hover:text-ice" onClick={() => nav(`/flights/${f.id}`)}>{code(f.dep)} → {code(f.arr)}</button>
+      <span className="text-[12px] text-muted">{fmt.date(f.date)}{f.flightMinutes ? ` · ${fmt.dur(f.flightMinutes)}` : ''} · {src(f)}{f.createdAt ? ` · saved ${new Date(f.createdAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}` : ''}</span>
+      <div className="ml-auto flex gap-1">{extra}<button className="btn-ghost h-8 px-2 text-[12px] hover:text-bad" onClick={() => remove([f.id], 'Flight')}><Trash2 className="h-3.5 w-3.5" />Delete</button></div>
+    </div>
+  );
+  return (
+    <Glass className="border border-warn/25 p-4 md:p-5">
+      <div className="flex items-start gap-3">
+        <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-warn/15 text-warn"><AlertTriangle className="h-4 w-4" /></div>
+        <div className="min-w-0 flex-1">
+          <h2 className="text-[15px] font-semibold">Check your logbook</h2>
+          <p className="text-[13px] text-muted">These entries are being counted in your totals. If one shouldn't be there, delete it. You can undo straight after.</p>
+        </div>
+      </div>
+      <div className="mt-4 flex flex-col gap-4">
+        {dups.map((g) => (
+          <div key={g.key}>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-[13px]">
+              <span><span className="font-medium">Logged {plural(g.flights.length, 'time')}:</span> <span className="text-muted">same route on the same day, which usually means one flight was saved twice (for example from SimBrief and again from the sim recorder).</span></span>
+              <button className="btn-ghost h-8 px-2 text-[12px]" onClick={() => keep(g.key)}><Check className="h-3.5 w-3.5" />They're different flights</button>
+            </div>
+            <div className="flex flex-col gap-1.5">{g.flights.map((f) => row(f))}</div>
+          </div>
+        ))}
+        {tests.length > 0 && (
+          <div>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-[13px]">
+              <span><span className="font-medium">Test recordings:</span> <span className="text-muted">made by the sim bridge's test mode, not a real sim session.</span></span>
+              {tests.length > 1 && <button className="btn-ghost h-8 px-2 text-[12px] hover:text-bad" onClick={() => remove(tests.map((t) => t.id), `${tests.length} test recordings`)}><Trash2 className="h-3.5 w-3.5" />Delete all</button>}
+            </div>
+            <div className="flex flex-col gap-1.5">{tests.map((f) => row(f))}</div>
+          </div>
+        )}
+      </div>
+    </Glass>
+  );
+}

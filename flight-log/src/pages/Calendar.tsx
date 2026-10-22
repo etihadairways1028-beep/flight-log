@@ -11,6 +11,7 @@ import { CATEGORY_LABEL, type Flight, type FlightCategory } from '../lib/types';
 import { CAT_COLOR, Glass, PageHeader, Segmented, cx } from '../components/ui';
 import { YearHeatmap } from '../components/charts/Heatmap';
 import { FlightCard } from '../components/flight/FlightBits';
+import { plural } from '../lib/units';
 
 export default function CalendarPage() {
   const flights = useStore((s) => s.data.flights);
@@ -78,7 +79,7 @@ export default function CalendarPage() {
                 const inMonth = d.month === cursor.month;
                 const mins = fs.reduce((a, f) => a + (f.flightMinutes ?? 0), 0);
                 return (
-                  <div key={iso} role="button" tabIndex={0} onClick={() => setSel(iso)} onKeyDown={(e) => e.key === 'Enter' && setSel(iso)} aria-label={`${d.toFormat('d LLLL')}: ${fs.length} flights`}
+                  <div key={iso} role="button" tabIndex={0} onClick={() => setSel(iso)} onKeyDown={(e) => e.key === 'Enter' && setSel(iso)} aria-label={`${d.toFormat('d LLLL')}: ${plural(fs.length, 'flight')}`}
                     className={cx('group relative min-h-[76px] cursor-pointer border-b border-r border-white/[0.05] p-1.5 text-left transition-colors md:min-h-[112px] md:p-2', !inMonth && 'opacity-35', sel === iso ? 'bg-accent/[0.12]' : 'hover:bg-white/[0.03]')}>
                     <div className="flex items-center justify-between">
                       <span className={cx('num grid h-6 w-6 place-items-center rounded-full text-[12px]', iso === today ? 'bg-accent font-semibold text-white' : 'text-muted')}>{d.day}</span>

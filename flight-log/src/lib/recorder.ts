@@ -4,7 +4,7 @@ import type { Flight, Settings, TrackPoint, AirportRef } from './types';
 import { emptyPilot } from './types';
 import { haversineKm } from './geo';
 import { allAirports, toRef } from './airports';
-import { emptyFlight, finalizeFlight } from './flight';
+import { emptyFlight, finalizeFlight, deepClone } from './flight';
 import { aircraftType } from './aircraftTypes';
 import { estimateNightMinutes, isNight } from './pilot';
 
@@ -144,7 +144,7 @@ const iso = (t: number | null) => (t == null ? null : new Date(t * 1000).toISOSt
 
 /** Build a Flight from a recording, optionally completing a planned flight. */
 export function recordingToFlight(st: RecState, settings: Settings, base?: Flight | null): Flight {
-  const f: Flight = base ? structuredClone(base) : emptyFlight({ ...settings, defaultCategory: 'simulator' });
+  const f: Flight = base ? deepClone(base) : emptyFlight({ ...settings, defaultCategory: 'simulator' });
   const first = st.track[0], lastP = st.track[st.track.length - 1];
   f.category = base?.category ?? 'simulator';
   f.status = 'completed';
@@ -182,3 +182,26 @@ export function recordingToFlight(st: RecState, settings: Settings, base?: Fligh
 export const PHASE_LABEL: Record<Phase, string> = {
   waiting: 'Waiting for data', preflight: 'At the gate', 'taxi-out': 'Taxiing out', airborne: 'Airborne', 'taxi-in': 'Taxiing in', arrived: 'Arrived',
 };
+
+/**
+ * An existing entry the new recording most likely belongs to: same departure and arrival,
+ * within a day, with no track yet (a SimBrief plan logged as flown, a planned flight, a
+ * manual entry). Recording into it updates that entry instead of logging the flight twice.
+ */
+export function findMatchingFlight(flights: Flight[], dep: string | undefined | null, arr: string | undefined | null, date: string): Flight | null {
+  if (!dep || !date) return null;
+  const day = (d: string) => Math.round(Date.parse(d + 'T00:00:00Z') / 86400000);
+  const cands = flights.filter((f) => f.status !== 'cancelled' && !(f.track && f.track.length > 1) && f.dep?.ident === dep && (!arr || !f.arr || f.arr.ident === arr) && f.date && Math.abs(day(f.date) - day(date)) <= 1);
+  // prefer an exact arrival match, then the closest date, then the newest entry
+  return cands.sort((a, b) => Number(b.arr?.ident === arr) - Number(a.arr?.ident === arr) || Math.abs(day(a.date) - day(date)) - Math.abs(day(b.date) - day(date)) || (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))[0] ?? null;
+}
+
+/** Local date of a recording's start at its departure airport. */
+export function recordingDate(st: RecState): string {
+  const startT = st.offBlock ?? st.takeoff ?? st.startedAt;
+  const first = st.track[0];
+  const dep = first ? nearestAirport(first.lat, first.lon) : null;
+  const d = startT ? new Date(startT * 1000) : new Date();
+  const local = dep?.tz ? d.toLocaleDateString('en-CA', { timeZone: dep.tz }) : d.toISOString().slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(local) ? local : d.toISOString().slice(0, 10);
+}

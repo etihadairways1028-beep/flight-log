@@ -18,6 +18,7 @@ import { pilotTotals } from '../lib/pilot';
 import { PILOT_FIELDS } from '../lib/types';
 import { loadExtendedAirports } from '../lib/airports';
 import { toKml, toGpx } from '../lib/planExport';
+import { plural } from '../lib/units';
 
 type ReportKind = 'review' | 'monthly' | 'annual' | 'aircraft' | 'routes' | 'airports' | 'hours' | 'pilot' | 'custom';
 const KINDS: { value: ReportKind; label: string }[] = [
@@ -111,7 +112,7 @@ function ReportBuilder() {
                 <div key={l}><div className="text-[11px] uppercase tracking-wider text-faint">{l}</div><div className="mono mt-1 text-[20px] font-semibold">{v}</div></div>
               ))}
             </div>
-            {sum.simMinutes > 0 && sum.realMinutes > 0 && <p className="text-[12px] text-muted">Of which real-world {fmt.dur(sum.realMinutes)} and simulator {fmt.dur(sum.simMinutes)}. Flight time is recorded on {sum.flightTimeKnown} of {sum.flights} flights.</p>}
+            {sum.simMinutes > 0 && sum.realMinutes > 0 && <p className="text-[12px] text-muted">Of which real-world {fmt.dur(sum.realMinutes)} and simulator {fmt.dur(sum.simMinutes)}. Flight time is recorded on {sum.flightTimeKnown} of {plural(sum.flights, 'flight')}.</p>}
             {kind === 'review' && <YearReview fs={fs} all={flights} year={year} />}
             {(kind === 'annual' || kind === 'hours' || kind === 'custom') && <div><h4 className="mb-2 text-[14px] font-semibold">By month</h4><Table head={['Month', 'Flights', 'Flight time', 'Real', 'Sim', 'Block']} rows={months.map((m) => [monthLabel(m.month, true), m.flights, fmt.dur(m.minutes), fmt.dur(m.realMinutes), fmt.dur(m.simMinutes), fmt.dur(m.blockMinutes)])} /></div>}
             {kind === 'hours' && <div><h4 className="mb-2 text-[14px] font-semibold">By category</h4><Table head={['Category', 'Flights', 'Flight time', 'Distance']} rows={cats.map((c) => [CATEGORY_LABEL[c.key as keyof typeof CATEGORY_LABEL], c.flights, fmt.dur(c.minutes), fmt.dist(c.distanceKm)])} /></div>}
@@ -176,11 +177,11 @@ function YearReview({ fs, all, year }: { fs: Flight[]; all: Flight[]; year: stri
         <Tile k="Aircraft types" v={`${r.types}`} sub={r.newTypes ? `${r.newTypes} flown for the first time` : undefined} />
         {r.far && <Tile k="Farthest flight" v={route(r.far)} sub={`${fmt.dist(r.far.distanceKm)} · ${fmt.date(r.far.date)}`} />}
         {r.long && <Tile k="Longest in the air" v={fmt.dur(r.long.flightMinutes)} sub={`${route(r.long)} · ${fmt.date(r.long.date)}`} />}
-        {r.busiest && <Tile k="Busiest month" v={monthLabel(r.busiest.month, true)} sub={`${r.busiest.flights} flights · ${fmt.dur(r.busiest.minutes)}`} />}
-        {r.route && r.route.flights > 1 && <Tile k="Favourite route" v={r.route.key} sub={`${r.route.flights} times`} />}
+        {r.busiest && <Tile k="Busiest month" v={monthLabel(r.busiest.month, true)} sub={`${plural(r.busiest.flights, 'flight')} · ${fmt.dur(r.busiest.minutes)}`} />}
+        {r.route && r.route.flights > 1 && <Tile k="Favourite route" v={r.route.key} sub={`${plural(r.route.flights, 'time')}`} />}
         {r.airport && <Tile k="Most visited airport" v={r.airport.label} sub={`${r.airport.name} · ${r.airport.total} visits`} />}
-        {r.type && <Tile k="Most flown type" v={r.type.key} sub={`${r.type.label} · ${r.type.flights} flights`} />}
-        {r.airline && <Tile k="Top airline" v={r.airline.key} sub={`${r.airline.flights} flights`} />}
+        {r.type && <Tile k="Most flown type" v={r.type.key} sub={`${r.type.label} · ${plural(r.type.flights, 'flight')}`} />}
+        {r.airline && <Tile k="Top airline" v={r.airline.key} sub={`${plural(r.airline.flights, 'flight')}`} />}
         {r.butter && <Tile k="Smoothest landing" v={`${Math.abs(r.butter.landingRateFpm!)} fpm`} sub={`${route(r.butter)} · ${fmt.date(r.butter.date)}`} />}
         {r.first && <Tile k="First and last" v={`${route(r.first)}`} sub={`${fmt.date(r.first.date)}${r.last && r.last !== r.first ? ` … ${route(r.last)} on ${fmt.date(r.last.date)}` : ''}`} />}
       </div>
@@ -202,7 +203,7 @@ function ExportPanel() {
     const payload = { app: 'Flight Log', format: 1, exportedAt: new Date().toISOString(), workspace: ws, settings: { ...settings, avatar: null }, flights, presets: data.presets, customAircraft: data.customAircraft, photos };
     downloadText(`flightlog-backup-${ws}-${stamp}.json`, JSON.stringify(payload, null, 1), 'application/json');
     sound.success();
-    toast({ kind: 'success', title: 'Backup downloaded', body: `${flights.length} flights${withPhotos ? `, ${Object.keys(photos).length} photos` : ''}` });
+    toast({ kind: 'success', title: 'Backup downloaded', body: `${plural(flights.length, 'flight')}${withPhotos ? `, ${Object.keys(photos).length} photos` : ''}` });
   }
   return (
     <Glass className="p-5">
@@ -283,7 +284,7 @@ function ImportPanel() {
     const n = await importFlights(ok.map((r) => r.flight!), `${fileName}: ${ok.length} added${dups.length && skipDup ? `, ${dups.length} duplicates skipped` : ''}${bad.length ? `, ${bad.length} rows with errors skipped` : ''}`);
     setBusy(false);
     sound.success();
-    toast({ kind: 'success', title: `Imported ${n} flights`, body: 'Your stats and map are up to date.' });
+    toast({ kind: 'success', title: `Imported ${plural(n, 'flight')}`, body: 'Your stats and map are up to date.' });
     reset();
   }
   async function restorePhotos() {
@@ -298,14 +299,14 @@ function ImportPanel() {
     const add = json.flights.filter((f) => !ids.has(f.id) && (!skipDup || !keys.has(dupKey(f))));
     await importFlights(add, `${fileName}: merged ${add.length}`);
     setBusy(false);
-    toast({ kind: 'success', title: `Merged ${add.length} flights`, body: `${json.flights.length - add.length} already in your logbook were skipped.` });
+    toast({ kind: 'success', title: `Merged ${plural(add.length, 'flight')}`, body: `${json.flights.length - add.length} already in your logbook were skipped.` });
     reset();
   }
   async function doJsonReplace() {
     if (!json) return;
     await restorePhotos();
     await replaceFlights(json.flights);
-    toast({ kind: 'success', title: 'Logbook restored', body: `${json.flights.length} flights from ${fileName}` });
+    toast({ kind: 'success', title: 'Logbook restored', body: `${plural(json.flights.length, 'flight')} from ${fileName}` });
     reset();
   }
 
@@ -383,7 +384,7 @@ function ImportPanel() {
           </div>
         </div>
       )}
-      <ConfirmDialog open={confirmReplace} onOpenChange={setConfirmReplace} title="Replace your logbook?" confirmLabel="Replace" body={<>Your current {flights.length} flights in this workspace will be removed and replaced with the {json?.flights.length ?? 0} flights from <span className="mono">{fileName}</span>. Download a backup first if you might need them.</>} onConfirm={doJsonReplace} />
+      <ConfirmDialog open={confirmReplace} onOpenChange={setConfirmReplace} title="Replace your logbook?" confirmLabel="Replace" body={<>Your current {plural(flights.length, 'flight')} in this workspace will be removed and replaced with the {json?.flights.length ?? 0} flights from <span className="mono">{fileName}</span>. Download a backup first if you might need them.</>} onConfirm={doJsonReplace} />
     </Glass>
   );
 }

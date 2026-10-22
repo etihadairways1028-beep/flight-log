@@ -42,6 +42,7 @@ export const DEFAULT_SETTINGS: Settings = {
   durationFormat: 'hm',
   theme: 'midnight',
   reduceTransparency: false,
+  glassLevel: 55,
   defaultCategory: 'real',
   defaultAircraft: '',
   defaultSimulator: 'MSFS 2024',
@@ -75,6 +76,7 @@ function normalizeSettings(...parts: any[]): Settings {
   }
   const g = out.goals && typeof out.goals === 'object' ? out.goals : {};
   const num = (v: any) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null);
+  out.glassLevel = Math.min(100, Math.max(0, Math.round(Number(out.glassLevel)))); if (!Number.isFinite(out.glassLevel)) out.glassLevel = 55;
   out.goals = { yearFlights: num(g.yearFlights), yearHours: num(g.yearHours), monthFlights: num(g.monthFlights), yearNewAirports: num(g.yearNewAirports) };
   if (out.networkProvider !== 'ivao') out.networkProvider = 'vatsim';
   return out as Settings;

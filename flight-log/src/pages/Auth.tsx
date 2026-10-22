@@ -8,6 +8,7 @@ import { Logo } from '../components/layout/AppShell';
 import { Banner, LogoMark } from '../components/layout/Brand';
 import { PHOTOS } from '../lib/images';
 import { sound } from '../lib/sound';
+import { plural } from '../lib/units';
 
 type Mode = 'signin' | 'signup' | 'magic' | 'reset';
 
@@ -173,7 +174,7 @@ export function AccountDialogs() {
       <Dialog open={!!conflict} onOpenChange={() => {}} title="Flights on this device" description={`Signed in as ${auth.user?.email}`} size="sm">
         {conflict && (
           <div className="flex flex-col gap-3">
-            <p className="text-[13.5px] text-muted">This browser has <span className="text-fg">{conflict.local.flights.length} flights</span> that aren't in your account yet. Your account has <span className="text-fg">{conflict.remote?.flights.length ?? 0}</span>.</p>
+            <p className="text-[13.5px] text-muted">This browser has <span className="text-fg">{plural(conflict.local.flights.length, 'flight')}</span> that aren't in your account yet. Your account has <span className="text-fg">{conflict.remote?.flights.length ?? 0}</span>.</p>
             <button className="btn-primary h-11" onClick={() => resolve('merge')}>Merge both (recommended)</button>
             <button className="btn-glass h-11" onClick={() => resolve('cloud')}>Use my account's flights only</button>
             <button className="btn-glass h-11" onClick={() => resolve('device')}>Replace account with this device's flights</button>

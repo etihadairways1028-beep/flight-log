@@ -16,6 +16,7 @@ import { flightsToCsv } from '../lib/csv';
 import { downloadText } from '../lib/download';
 import { summarize } from '../lib/stats';
 import { sound } from '../lib/sound';
+import { plural } from '../lib/units';
 
 type SortKey = 'date' | 'flight' | 'route' | 'aircraft' | 'reg' | 'airline' | 'time' | 'block' | 'distance' | 'category';
 const COLUMNS: { key: SortKey | 'status'; label: string; default: boolean }[] = [
@@ -305,7 +306,7 @@ export default function Flights() {
       <ConfirmDialog
         open={!!confirm}
         onOpenChange={(v) => !v && setConfirm(null)}
-        title={confirm && confirm.length > 1 ? `Delete ${confirm.length} flights?` : 'Delete this flight?'}
+        title={confirm && confirm.length > 1 ? `Delete ${plural(confirm.length, 'flight')}?` : 'Delete this flight?'}
         body={<>This removes {confirm && confirm.length > 1 ? 'these records' : 'the record'} from your logbook and recalculates every total. You can undo straight after.</>}
         onConfirm={() => doDelete(confirm ?? [])}
       />
